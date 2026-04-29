@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard — Inteligencia comercial</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div>
+        <h1>Dashboard de inteligencia comercial</h1>
+        <p class="app-sub">Cruce Contract Compliance × MB Q1 — decisión y riesgo, no operativa de ventas</p>
+      </div>
+    </header>
+
+    <section class="card section" id="section-upload">
+      <h2>1. Carga de archivos</h2>
+      <p class="muted">Sube el Excel de <strong>Contract Compliance</strong> y el de <strong>MB Q1</strong>. La app detecta columnas aunque los nombres varíen ligeramente.</p>
+      <div class="upload-grid">
+        <div class="upload-block">
+          <label class="upload-label" for="file-cc">Contract Compliance (eje X: cumplimiento)</label>
+          <input type="file" id="file-cc" accept=".xlsx,.xls" />
+          <div class="file-status" id="status-cc" data-empty>Archivo no cargado</div>
+        </div>
+        <div class="upload-block">
+          <label class="upload-label" for="file-mb">MB Q1 (eje Y: rentabilidad)</label>
+          <input type="file" id="file-mb" accept=".xlsx,.xls" />
+          <div class="file-status" id="status-mb" data-empty>Archivo no cargado</div>
+        </div>
+      </div>
+      <div class="alerts" id="upload-alerts" hidden></div>
+      <p class="hint" id="hint-both" hidden>Con ambos archivos cargados se actualiza el dashboard automáticamente.</p>
+    </section>
+
+    <section class="card section" id="section-executive" hidden>
+      <h2>2. Resumen ejecutivo</h2>
+      <div class="exec-bullets" id="executive-text"></div>
+    </section>
+
+    <section class="card section" id="section-kpis" hidden>
+      <h2>3. KPIs principales</h2>
+      <div class="kpi-grid" id="kpi-grid"></div>
+    </section>
+
+    <section class="card section" id="section-insights" hidden>
+      <h2>4. Insights automáticos</h2>
+      <ul class="insight-list" id="insight-list"></ul>
+    </section>
+
+    <section class="card section" id="section-chart" hidden>
+      <h2>5. Mapa estratégico de clientes</h2>
+      <p class="muted small">Eje X: cumplimiento % = facturación real ÷ facturación esperada · Eje Y: margen % = margen bruto ÷ valor facturado. Tamaño: facturación real. Cortes: medianas ajustables.</p>
+      <div class="chart-controls">
+        <label>Umbral cumplimiento
+          <select id="threshold-cumplimiento">
+            <option value="median">Mediana (por defecto)</option>
+            <option value="0.5">50% fijo</option>
+            <option value="0.8">80% fijo</option>
+            <option value="0.9">90% fijo</option>
+          </select>
+        </label>
+        <label>Umbral margen %
+          <select id="threshold-margen">
+            <option value="median">Mediana (por defecto)</option>
+            <option value="0.05">5% fijo</option>
+            <option value="0.10">10% fijo</option>
+            <option value="0.15">15% fijo</option>
+            <option value="0.20">20% fijo</option>
+          </select>
+        </label>
+        <button type="button" class="btn" id="btn-refresh-quadrants">Recalcular cuadrantes</button>
+      </div>
+      <div id="plotly-chart" class="plotly-box"></div>
+    </section>
+
+    <section class="card section" id="section-risks" hidden>
+      <h2>6. Riesgos</h2>
+      <p class="muted small">Ordenado por impacto (facturación o exposición) cuando aplica.</p>
+      <div class="data-table-wrap">
+        <table class="data-table" id="table-risks"><thead></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section class="card section" id="section-ops" hidden>
+      <h2>7. Oportunidades</h2>
+      <p class="muted small">Ordenado por potencial estimado (facturación esperada − facturación real).</p>
+      <div class="data-table-wrap">
+        <table class="data-table" id="table-ops"><thead></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section class="card section" id="section-segments" hidden>
+      <h2>8. Análisis por segmento</h2>
+      <h3 class="h3">Por vendedor</h3>
+      <div class="data-table-wrap">
+        <table class="data-table" id="table-seg-vendedor"><thead></thead><tbody></tbody></table>
+      </div>
+      <h3 class="h3">Público / privado</h3>
+      <div class="data-table-wrap">
+        <table class="data-table" id="table-seg-publico"><thead></thead><tbody></tbody></table>
+      </div>
+      <h3 class="h3">Licitación</h3>
+      <div class="data-table-wrap">
+        <table class="data-table" id="table-seg-licit"><thead></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section class="card section" id="section-table" hidden>
+      <h2>9. Tabla inteligente</h2>
+      <div class="table-toolbar">
+        <input type="search" id="table-search" placeholder="Buscar por cliente o código…" class="search-input" />
+        <label>Vendedor <select id="filter-vendedor"><option value="">Todos</option></select></label>
+        <label>Público/privado <select id="filter-publico"><option value="">Todos</option></select></label>
+        <label>Licitación <select id="filter-licit"><option value="">Todos</option></select></label>
+        <label>Categoría <select id="filter-cat"><option value="">Todas</option></select></label>
+        <label>Bajo umbral <select id="filter-bajo-cump">
+          <option value="">—</option>
+          <option value="lowCump">Bajo cumplimiento</option>
+          <option value="lowMargin">Margen &lt; umbral</option>
+        </select></label>
+        <button type="button" class="btn btn-primary" id="btn-export-csv">Exportar CSV</button>
+      </div>
+      <div class="data-table-wrap scroll">
+        <table class="data-table" id="table-main"><thead></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="js/dashboard.js"></script>
+</body>
+</html>
