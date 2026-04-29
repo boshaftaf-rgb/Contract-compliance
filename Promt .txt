@@ -1,0 +1,548 @@
+﻿Pmrt mejora de producto 
+Actúa como experto en UX, producto, análisis de datos y desarrollo frontend.
+
+
+Quiero crear desde cero una aplicación web tipo dashboard de inteligencia comercial.
+
+
+IMPORTANTE:
+El HTML anterior de la competencia SOLO debe usarse como referencia para entender el tipo de visualización:
+- dashboard ejecutivo
+- gráfico scatter/burbujas
+- filtros
+- KPIs
+- tabla
+- análisis por cliente
+
+
+NO copies su código.
+NO uses su PAYLOAD.
+NO pegues datos manualmente dentro del HTML.
+NO dependas de datos embebidos.
+
+
+La nueva aplicación debe leer la información desde archivos Excel cargados por el usuario.
+
+
+---
+
+
+# OBJETIVO DEL PRODUCTO
+
+
+Construir un dashboard ejecutivo que cruce información de dos archivos Excel:
+
+
+1. Archivo de Contract Compliance
+   - debe funcionar como eje X
+   - mide cumplimiento de contrato por cliente
+   - calcula:
+     Cumplimiento = Facturación real / Facturación esperada
+
+
+2. Archivo MB Q1
+   - debe funcionar como eje Y
+   - mide margen/rentabilidad por cliente
+   - calcula:
+     Margen % = Margen bruto / Valor facturado
+
+
+La app debe cruzar ambos archivos por cliente o código de cliente.
+
+
+---
+
+
+# USUARIO FINAL
+
+
+El usuario final NO es vendedor.
+El usuario final es:
+- director comercial
+- gerente comercial
+- analista de negocio
+- dirección general
+
+
+Por eso la UX debe enfocarse en:
+- claridad ejecutiva
+- toma de decisiones
+- riesgos
+- oportunidades
+- concentración
+- rentabilidad
+- cumplimiento
+
+
+---
+
+
+# TECNOLOGÍA
+
+
+Crear una aplicación web desde cero.
+
+
+Preferencia:
+- HTML + CSS + JavaScript puro
+- usar SheetJS/xlsx para leer archivos Excel
+- usar Plotly.js para el gráfico scatter/burbujas
+
+
+La aplicación debe permitir al usuario subir los dos archivos Excel desde la interfaz.
+
+
+---
+
+
+# FLUJO DE USO
+
+
+1. El usuario abre la app
+2. Sube archivo Excel de Contract Compliance
+3. Sube archivo Excel de MB Q1
+4. La app procesa ambos archivos
+5. Normaliza columnas
+6. Cruza los datos por código/cliente
+7. Calcula KPIs
+8. Muestra dashboard interactivo
+
+
+---
+
+
+# ESTRUCTURA DEL DASHBOARD
+
+
+La app debe tener estas secciones:
+
+
+1. Carga de archivos
+2. Resumen Ejecutivo
+3. KPIs principales
+4. Insights automáticos
+5. Mapa estratégico de clientes
+6. Riesgos
+7. Oportunidades
+8. Análisis por segmento
+9. Tabla inteligente
+
+
+---
+
+
+# 1. CARGA DE ARCHIVOS
+
+
+Crear una sección clara para subir:
+
+
+- Excel Contract Compliance
+- Excel MB Q1
+
+
+Mostrar estado:
+- archivo cargado
+- número de filas leídas
+- columnas detectadas
+- errores si faltan columnas necesarias
+
+
+Debe haber validación básica.
+
+
+---
+
+
+# 2. NORMALIZACIÓN DE DATOS
+
+
+La app debe intentar detectar columnas aunque tengan nombres ligeramente distintos.
+
+
+Ejemplos de campos necesarios:
+
+
+Para Contract Compliance:
+- código cliente
+- cliente
+- vendedor
+- público/privado
+- licitación
+- facturación esperada
+- facturación neta/real
+- contratos
+
+
+Para MB Q1:
+- código cliente
+- cliente
+- valor facturado
+- margen bruto
+- unidades
+- vendedor si existe
+
+
+Crear funciones separadas para:
+- leer Excel
+- normalizar nombres de columnas
+- limpiar números
+- limpiar textos
+- cruzar información
+- calcular métricas
+
+
+---
+
+
+# 3. MÉTRICAS A CALCULAR
+
+
+Por cliente calcular:
+
+
+- código cliente
+- nombre cliente
+- vendedor
+- público / privado
+- licitación
+- número de contratos
+- facturación esperada
+- facturación real
+- cumplimiento %
+- valor facturado MB
+- margen bruto
+- margen %
+- diferencia esperada vs real
+- potencial estimado
+- categoría estratégica
+
+
+Fórmulas:
+
+
+Cumplimiento % =
+facturación real / facturación esperada
+
+
+Margen % =
+margen bruto / valor facturado MB
+
+
+Potencial estimado =
+facturación esperada - facturación real
+
+
+---
+
+
+# 4. CATEGORÍAS ESTRATÉGICAS
+
+
+Clasificar cada cliente en cuadrantes:
+
+
+1. Ideal
+   Alto margen + alto cumplimiento
+
+
+2. Oportunidad
+   Alto margen + bajo cumplimiento
+
+
+3. Revisar precios
+   Bajo margen + alto cumplimiento
+
+
+4. Acción urgente
+   Bajo margen + bajo cumplimiento
+
+
+Usar medianas o umbrales configurables para definir alto/bajo.
+
+
+---
+
+
+# 5. RESUMEN EJECUTIVO
+
+
+Arriba del dashboard mostrar una sección ejecutiva con frases claras.
+
+
+Ejemplos:
+
+
+- “El cumplimiento ponderado general es de X%.”
+- “X clientes tienen margen negativo.”
+- “Los top 5 clientes concentran X% de la facturación.”
+- “Hay X clientes con alto margen pero bajo cumplimiento.”
+- “El mayor riesgo económico está en clientes con alto valor y bajo cumplimiento.”
+
+
+Los insights deben generarse automáticamente desde los datos cargados.
+
+
+---
+
+
+# 6. KPIs PRINCIPALES
+
+
+Mostrar tarjetas con:
+
+
+- total de clientes
+- total de contratos
+- facturación esperada
+- facturación real
+- cumplimiento ponderado
+- margen bruto total
+- margen % ponderado
+- clientes con margen negativo
+- clientes en oportunidad
+- clientes en riesgo
+
+
+---
+
+
+# 7. MAPA ESTRATÉGICO
+
+
+Crear gráfico scatter/burbujas:
+
+
+Eje X:
+Cumplimiento de contrato %
+
+
+Eje Y:
+Rentabilidad / Margen %
+
+
+Tamaño de burbuja:
+facturación real o valor facturado
+
+
+Color:
+cuadrante estratégico
+
+
+Tooltip:
+- cliente
+- código
+- vendedor
+- cumplimiento
+- margen
+- facturación esperada
+- facturación real
+- margen bruto
+- potencial estimado
+- categoría estratégica
+
+
+Debe verse parecido en concepto al dashboard de referencia, pero más claro y ejecutivo.
+
+
+---
+
+
+# 8. RIESGOS
+
+
+Crear sección “Riesgos principales” con:
+
+
+- clientes con margen negativo
+- clientes grandes con bajo cumplimiento
+- concentración de facturación en top 5/top 10
+- clientes con baja rentabilidad y alta facturación
+
+
+Ordenar por impacto económico.
+
+
+---
+
+
+# 9. OPORTUNIDADES
+
+
+Crear sección “Oportunidades principales” con:
+
+
+- clientes con alto margen pero bajo cumplimiento
+- mayor potencial estimado
+- clientes subexplotados
+- clientes donde aumentar cumplimiento generaría mayor impacto
+
+
+Ordenar por potencial estimado.
+
+
+---
+
+
+# 10. ANÁLISIS POR SEGMENTO
+
+
+Mostrar comparaciones agregadas por:
+
+
+- vendedor
+- público vs privado
+- licitación sí/no
+
+
+Para cada segmento mostrar:
+
+
+- clientes
+- facturación esperada
+- facturación real
+- cumplimiento
+- margen bruto
+- margen %
+
+
+---
+
+
+# 11. TABLA INTELIGENTE
+
+
+Crear tabla con todos los clientes cruzados.
+
+
+Columnas:
+- código
+- cliente
+- vendedor
+- público/privado
+- licitación
+- contratos
+- facturación esperada
+- facturación real
+- cumplimiento %
+- valor facturado
+- margen bruto
+- margen %
+- potencial estimado
+- categoría
+
+
+Funciones:
+- ordenar columnas
+- buscar cliente
+- filtrar por vendedor
+- filtrar por público/privado
+- filtrar por licitación
+- filtrar por categoría
+- resaltar margen negativo
+- resaltar bajo cumplimiento
+- exportar CSV
+
+
+---
+
+
+# 12. UX / DISEÑO
+
+
+Diseño ejecutivo, moderno y limpio.
+
+
+Prioridades:
+- claridad antes que decoración
+- jerarquía visual fuerte
+- secciones bien separadas
+- tarjetas con insights
+- colores con significado:
+  verde = positivo
+  amarillo/naranja = oportunidad/alerta
+  rojo = riesgo
+  azul = información
+
+
+Debe sentirse como una herramienta profesional de business intelligence, no como una hoja de cálculo.
+
+
+---
+
+
+# 13. IMPORTANTE
+
+
+No construir una app para vendedores.
+No crear tareas comerciales.
+No crear CRM.
+No crear seguimiento de actividades.
+
+
+Esto es un dashboard estratégico para dirección y gerencia.
+
+
+---
+
+
+# OUTPUT ESPERADO
+
+
+Genera la aplicación completa desde cero con:
+
+
+1. HTML completo
+2. CSS completo
+3. JavaScript completo
+4. Lectura real de Excel usando SheetJS
+5. Visualización con Plotly
+6. Cálculo automático de métricas
+7. Dashboard funcional
+8. Comentarios claros en el código
+
+
+La app debe funcionar localmente abriendo el archivo HTML en el navegador.
+
+
+IMPORTANTE:
+No inventes fórmulas ni lógica de negocio.
+Usa exactamente estas definiciones:
+
+
+- Cumplimiento % = facturación real / facturación esperada
+- Margen % = margen bruto / valor facturado
+- Potencial = facturación esperada - facturación real
+
+
+Si hay ambigüedad en columnas, solicita mapeo o usa heurísticas claras.
+IMPORTANTE SOBRE LOS EXCEL:
+
+
+Las columnas pueden tener nombres distintos dependiendo del archivo.
+Debes:
+
+
+1. Detectar columnas por similitud de nombre (ej: "cliente", "Cliente", "NOMBRE CLIENTE")
+2. Mostrar un log en consola con las columnas detectadas
+3. Si falta alguna columna crítica, mostrar error claro en pantalla
+
+
+Columnas mínimas esperadas:
+
+
+Contract Compliance:
+- cliente o código cliente
+- facturación esperada
+- facturación real o neta
+- vendedor (opcional)
+- público/privado (opcional)
+
+
+MB Q1:
+- cliente o código cliente
+- valor facturado
+- margen bruto
+
+
+No asumas nombres exactos.
