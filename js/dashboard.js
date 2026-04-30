@@ -340,44 +340,6 @@
     }
   }
 
-  function hasRealVendorData(rows) {
-    for (var i = 0; i < rows.length; i++) {
-      var v = cleanVendorName(rows[i].vendedor);
-      if (v && v !== '—') return true;
-    }
-    return false;
-  }
-
-  /**
-   * Fallback interno cuando ningún Excel trae vendedor:
-   * reparte la cartera en 3 grupos determinísticos para habilitar filtros/segmentos.
-   */
-  function autoAssignFallbackVendors(rows) {
-    if (!rows || !rows.length) return;
-    var labels = ['CLIVIO MARIA NOEL CLIVO', 'LAMBRUSCHINI MATEO', 'MAZZA MARCOS'];
-    var ratios = [0.32, 0.30, 0.38];
-    var list = rows.slice();
-    list.sort(function (a, b) {
-      var ka = normKey((a.codigo && a.codigo !== '—') ? a.codigo : (a.cliente || a.key || ''));
-      var kb = normKey((b.codigo && b.codigo !== '—') ? b.codigo : (b.cliente || b.key || ''));
-      if (ka < kb) return -1;
-      if (ka > kb) return 1;
-      return 0;
-    });
-    var total = list.length;
-    var targets = ratios.map(function (r) { return Math.floor(total * r); });
-    var sum = targets[0] + targets[1] + targets[2];
-    while (sum < total) { targets[2] += 1; sum += 1; }
-    while (sum > total) { targets[2] -= 1; sum -= 1; }
-    var idx = 0;
-    for (var g = 0; g < labels.length; g++) {
-      var end = idx + targets[g];
-      for (var i = idx; i < end && i < list.length; i++) list[i].vendedor = labels[g];
-      idx = end;
-    }
-    for (var j = idx; j < list.length; j++) list[j].vendedor = labels[2];
-    normalizeVendorNames(rows);
-  }
 
   function buildJoinedRow(cc, mb) {
     var fe = +cc.fact_esp;
@@ -1301,7 +1263,6 @@
     var ccAgg = aggregateCC(cco.rows, ccm.map);
     var mbAgg = aggregateMB(mbo.rows, mbm.map);
     state.rows = mergeData(ccAgg, mbAgg);
-    if (!hasRealVendorData(state.rows)) autoAssignFallbackVendors(state.rows);
     state.ccMeta = cco;
     state.mbMeta = mbo;
     if (!state.rows.length) {
