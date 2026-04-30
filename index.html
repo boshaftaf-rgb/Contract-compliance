@@ -51,30 +51,100 @@
       <ul class="insight-list" id="insight-list"></ul>
     </section>
 
-    <section class="card section" id="section-chart" hidden>
+    <section class="card section section-strategic-map" id="section-chart" hidden>
       <h2>5. Mapa estratégico de clientes</h2>
-      <p class="muted small">Eje X: cumplimiento % = facturación real ÷ facturación esperada · Eje Y: margen % = margen bruto ÷ valor facturado. Tamaño: facturación real. Cortes: medianas ajustables.</p>
-      <div class="chart-controls">
-        <label>Umbral cumplimiento
-          <select id="threshold-cumplimiento">
-            <option value="median">Mediana (por defecto)</option>
-            <option value="0.5">50% fijo</option>
-            <option value="0.8">80% fijo</option>
-            <option value="0.9">90% fijo</option>
-          </select>
-        </label>
-        <label>Umbral margen %
-          <select id="threshold-margen">
-            <option value="median">Mediana (por defecto)</option>
-            <option value="0.05">5% fijo</option>
-            <option value="0.10">10% fijo</option>
-            <option value="0.15">15% fijo</option>
-            <option value="0.20">20% fijo</option>
-          </select>
-        </label>
-        <button type="button" class="btn" id="btn-refresh-quadrants">Recalcular cuadrantes</button>
+      <p class="muted small strategic-lead">Cada burbuja es un cliente. Ajusta filtros abajo; el gráfico se actualiza al instante.</p>
+
+      <div class="strategic-chips-deck" id="strategic-filters">
+        <div class="strategic-filter-card">
+          <div class="strategic-card-head">
+            <span class="strategic-card-title">Vendedor</span>
+            <button type="button" class="map-todos-link" id="map-vend-todos" data-todos="vend" title="Incluir todos">Todos</button>
+          </div>
+          <div class="chip-row" id="map-chips-vend"></div>
+        </div>
+        <div class="strategic-filter-card">
+          <div class="strategic-card-head">
+            <span class="strategic-card-title">Desc. público / privado</span>
+            <button type="button" class="map-todos-link" id="map-pub-todos" data-todos="pub" title="Incluir todos">Todos</button>
+          </div>
+          <div class="chip-row" id="map-chips-pub">
+            <button type="button" class="map-chip" data-pub="Público" aria-pressed="false">Público <span class="chip-cnt" data-cnt="pub:Publico">(0)</span></button>
+            <button type="button" class="map-chip" data-pub="Privado" aria-pressed="false">Privado <span class="chip-cnt" data-cnt="pub:Privado">(0)</span></button>
+          </div>
+        </div>
+        <div class="strategic-filter-card">
+          <div class="strategic-card-head">
+            <span class="strategic-card-title">Licitación</span>
+            <button type="button" class="map-todos-link" id="map-lic-todos" data-todos="lic" title="Incluir todos">Todos</button>
+          </div>
+          <div class="chip-row" id="map-chips-lic">
+            <button type="button" class="map-chip" data-lic="Sí" aria-pressed="false">Sí <span class="chip-cnt" data-cnt="lic:Si">(0)</span></button>
+            <button type="button" class="map-chip" data-lic="No" aria-pressed="false">No <span class="chip-cnt" data-cnt="lic:No">(0)</span></button>
+          </div>
+        </div>
       </div>
-      <div id="plotly-chart" class="plotly-box"></div>
+
+      <div class="strategic-controls-row" id="strategic-controls">
+        <div class="strategic-ctrl strategic-ctrl--search">
+          <span class="strategic-ctrl-label">Buscar cliente / código</span>
+          <input type="search" class="strategic-input" id="map-search" placeholder="Escribe un nombre o código…" autocomplete="off" />
+        </div>
+        <div class="strategic-ctrl">
+          <span class="strategic-ctrl-label">Nº mín. contratos <output class="strategic-output" id="map-min-contratos-val" for="map-min-contratos">0</output></span>
+          <input type="range" class="strategic-range" id="map-min-contratos" min="0" max="50" value="0" step="1" />
+        </div>
+        <div class="strategic-ctrl">
+          <span class="strategic-ctrl-label">Cumplimiento mín. % <output class="strategic-output" id="map-min-cump-val" for="map-min-cump">0</output></span>
+          <input type="range" class="strategic-range" id="map-min-cump" min="0" max="200" value="0" step="1" />
+        </div>
+        <div class="strategic-ctrl">
+          <span class="strategic-ctrl-label">Color por</span>
+          <select class="strategic-select" id="map-color-by">
+            <option value="quadrant" selected>Cuadrante</option>
+            <option value="vendedor">Vendedor</option>
+            <option value="publico">Público / privado</option>
+            <option value="licitacion">Licitación</option>
+          </select>
+        </div>
+        <div class="strategic-ctrl">
+          <span class="strategic-ctrl-label">Tamaño por</span>
+          <select class="strategic-select" id="map-size-by">
+            <option value="valor_fact">Valor facturado (MB)</option>
+            <option value="contratos" selected>Nº contratos</option>
+            <option value="fact_esp">Facturación esperada</option>
+            <option value="margen_bruto">Margen bruto</option>
+            <option value="uniform">Uniforme</option>
+          </select>
+        </div>
+        <div class="strategic-ctrl">
+          <span class="strategic-ctrl-label">Escala eje X</span>
+          <select class="strategic-select" id="map-x-scale">
+            <option value="linear" selected>Lineal</option>
+            <option value="log">Logarítmica</option>
+          </select>
+        </div>
+        <div class="strategic-ctrl strategic-ctrl--actions">
+          <button type="button" class="strategic-btn secondary" id="map-btn-reset">Reset filtros</button>
+          <button type="button" class="strategic-btn primary" id="map-btn-export">Exportar CSV</button>
+        </div>
+      </div>
+
+      <p class="strategic-map-empty" id="strategic-map-empty" hidden>No hay clientes graficables con los filtros actuales.</p>
+
+      <div class="map-legend-bar" id="map-legend-bar" aria-label="Mediana y leyenda de cuadrantes">
+        <p class="map-legend-median" id="map-median-text"></p>
+        <div class="map-legend-cats" id="quadrant-legend">
+          <span class="map-cat map-cat-ideal"><span class="map-cat-dot"></span>Alta margen % + Alto cumpl. <strong>Ideal</strong></span>
+          <span class="map-cat map-cat-opp"><span class="map-cat-dot"></span>Alta margen % + Bajo cumpl. <strong>Oportunidad</strong></span>
+          <span class="map-cat map-cat-prices"><span class="map-cat-dot"></span>Baja margen % + Alto cumpl. <strong>Revisar precios</strong></span>
+          <span class="map-cat map-cat-urgent"><span class="map-cat-dot"></span>Baja margen % + Bajo cumpl. <strong>Acción urgente</strong></span>
+        </div>
+      </div>
+
+      <div id="plotly-chart" class="plotly-box plotly-box--map" role="img" aria-label="Mapa de dispersión de clientes"></div>
+
+      <p class="muted small strategic-footnote" id="map-axis-footnote">Eje X: cumplimiento % = Σ fact. real / Σ fact. esperada (por cliente). Eje Y: margen % = m. bruto / valor facturado (MB). Tamaño según criterio elegido. Líneas punteadas = medianas calculadas sobre <strong>la cartera completa</strong> (no se recalculan con los filtros visuales).</p>
     </section>
 
     <section class="card section" id="section-risks" hidden>

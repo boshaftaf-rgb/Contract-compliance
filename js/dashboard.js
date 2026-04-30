@@ -12,7 +12,7 @@
   var CC_KEYS = {
     codigo: ['codigo', 'código', 'id cliente', 'idcliente', 'cod cliente', 'code', 'n° cliente', 'nº cliente', 'cód', 'nro codigo'],
     cliente: ['cliente', 'razon', 'razón', 'customer', 'nombre', 'deudor', 'empresa', 'nombre cliente', 'razon social', 'ruc'],
-    vendedor: ['vendedor', 'asesor', 'comercial', 'seller', 'ejecutiv', 'representant'],
+    vendedor: ['vendedor', 'vend', 'asesor', 'comercial', 'seller', 'ejecutiv', 'representant'],
     publico: ['publico', 'privado', 'sector', 'público', 'tipo', 'gob', 'gobierno', 'público/priv', 'público/privado'],
     licitacion: ['licit', 'concurso', 'lic tacion', 'remate'],
     fact_esp: ['esperad', 'meta', 'objetiv', 'target', 'budget', 'proyectad', 'planead', 'presup', 'monto esper'],
@@ -23,8 +23,9 @@
   var MB_KEYS = {
     codigo: ['codigo', 'código', 'id cliente', 'idcliente', 'cod cliente', 'code', 'nro codigo', 'cód', 'cód.'],
     cliente: ['cliente', 'razon', 'razón', 'customer', 'nombre', 'deudor', 'empresa', 'nombre cliente'],
-    vendedor: ['vendedor', 'asesor', 'comercial', 'seller', 'ejecutiv'],
-    valor: ['valor factur', 'ventas', 'facturación', 'facturacion', 'monto', 'importe', 'ingreso', 'revenue', 'billing', 'vta'],
+    vendedor: ['vendedor', 'vend', 'asesor', 'comercial', 'seller', 'ejecutiv', 'representant'],
+    /** fact. neto/venta neta: planillas frecuentes; si no, no matchea "valor facturado" en el encabezado. */
+    valor: ['valor factur', 'fact neto', 'fact. neto', 'ventas', 'facturación', 'facturacion', 'monto', 'importe', 'ingreso', 'revenue', 'billing', 'vta', 'vta neta', 'venta neta', 'importe neta'],
     margen: ['margen bruto', 'm.b.', 'margen  bruto', 'gross', 'm bruto', 'm/b', 'margen'],
     unidades: ['unidad', 'qty', 'cant', 'pzs', 'unidades', 'pzs.']
   };
@@ -41,6 +42,9 @@
     cumpThresh: null,
     margThresh: null
   };
+
+  /** Filtros solo sección 5. vend/pub/lic: null = mostrar todos; Set = OR dentro del tipo */
+  var mapState = { vend: null, pub: null, lic: null, search: '', minC: 0, minCump: 0, colorBy: 'quadrant', sizeBy: 'contratos', xLog: false };
 
   // --- normalización y números ---
   function normKey(s) {
@@ -73,6 +77,25 @@
     return parseFloat(s);
   }
 
+  /**
+   * Convierte cumpl. / margen a cifra 0-100+ para el eje (ratio 0.56 -> 56; "56%" -> 56).
+   * null/undefined/NaN -> null
+   */
+  function toPercentValue(value) {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'number' && (isNaN(value) || value !== value)) return null;
+    if (typeof value === 'string') {
+      var t = value.trim();
+      if (t === '' || t === '—' || t === '-') return null;
+      t = t.replace(/%/g, ' ').replace(/,/g, '.').replace(/\s+/g, '');
+      if (t === '') return null;
+    }
+    var n = (typeof value === 'string') ? parseNumber(value) : value;
+    if (typeof n !== 'number' || isNaN(n) || n !== n) return null;
+    if (n >= 0 && n <= 1) return n * 100;
+    return n;
+  }
+
   function scoreHeader(headerNorm, keywords) {
     if (!headerNorm) return 0;
     var t = 0;
@@ -103,6 +126,8 @@
       if (!CC_KEYS.hasOwnProperty(k)) continue;
       var r = findBestIndex(h, CC_KEYS[k], null);
       m[k] = r.index;
+      // Campos opcionales: evita enganchar columnas incorrectas por parecido débil.
+      if ((k === 'vendedor' || k === 'publico' || k === 'licitacion') && r.score < 3) m[k] = -1;
     }
     if (m.fact_esp === m.fact_real && m.fact_esp >= 0) m.fact_real = -1;
     return { map: m, h: h, headers: headers };
@@ -115,6 +140,7 @@
       if (!MB_KEYS.hasOwnProperty(k2)) continue;
       var r2 = findBestIndex(h, MB_KEYS[k2], null);
       m[k2] = r2.index;
+      if (k2 === 'vendedor' && r2.score < 3) m[k2] = -1;
     }
     return { map: m, h: h, headers: headers };
   }
@@ -148,12 +174,21 @@
     return { headers: headers, rows: rows };
   }
 
+  /** Código de cliente (SAP, etc.): puro numérico → misma clave aunque venga en col. "Cliente" en un archivo y "Código" en otro. */
+  function looksLikeClientId(s) {
+    if (s == null) return false;
+    var t = String(s).trim();
+    if (t.length < 5) return false;
+    return /^\d+$/.test(t);
+  }
+
   function clientKey(row, map, headers) {
     var ci = map.codigo;
     var cj = map.cliente;
     var code = (ci >= 0 && row[ci] != null) ? String(row[ci]).trim() : '';
     if (code) return 'C:' + normKey(code);
     var name = (cj >= 0 && row[cj] != null) ? String(row[cj]).trim() : '';
+    if (looksLikeClientId(name)) return 'C:' + normKey(name);
     return 'N:' + normKey(name);
   }
 
@@ -173,6 +208,13 @@
     if (t.indexOf('publico') >= 0 || t.indexOf('gobierno') >= 0) return 'Público';
     if (t.indexOf('priv') >= 0) return 'Privado';
     return String(s);
+  }
+
+  function cleanVendorName(s) {
+    if (s == null) return '—';
+    var t = String(s).replace(/\s+/g, ' ').trim();
+    if (!t || t === '-' || t === '—') return '—';
+    return t.toUpperCase();
   }
 
   function aggregateCC(rows, map) {
@@ -198,8 +240,15 @@
       var frea = map.fact_real >= 0 ? parseNumber(line[map.fact_real]) : 0;
       g[k].fact_esp += isNaN(fesp) ? 0 : fesp;
       g[k].fact_real += isNaN(frea) ? 0 : frea;
-      var cts = map.contratos >= 0 ? parseNumber(line[map.contratos]) : 1;
-      g[k].contratos += (isNaN(cts) ? 0 : cts) || 1;
+      // "N° contrat" casi siempre es identificador (miles de millones al sumar); "cant" es cantidad pequeña
+      var cadd = 1;
+      if (map.contratos >= 0) {
+        var cn = parseNumber(line[map.contratos]);
+        if (isNaN(cn) || cn <= 0) cadd = 1;
+        else if (cn > 1e4) cadd = 1;
+        else cadd = Math.max(1, Math.round(cn));
+      }
+      g[k].contratos += cadd;
       g[k]._n += 1;
     }
     var out = [];
@@ -256,7 +305,39 @@
     }
     var final = [];
     for (var k5 in m) { if (m.hasOwnProperty(k5)) { var rec = m[k5]; var row = buildJoinedRow(rec.cc, rec.mb); if (row) final.push(row); } }
+    normalizeVendorNames(final);
     return final;
+  }
+
+  function normalizeVendorNames(rows) {
+    if (!rows || !rows.length) return;
+    var byNorm = {};
+    for (var i = 0; i < rows.length; i++) {
+      var v = cleanVendorName(rows[i].vendedor);
+      var nk = normKey(v);
+      if (!nk) nk = '—';
+      if (!byNorm[nk]) byNorm[nk] = { total: 0, forms: {} };
+      byNorm[nk].total += 1;
+      byNorm[nk].forms[v] = (byNorm[nk].forms[v] || 0) + 1;
+    }
+    var canon = {};
+    Object.keys(byNorm).forEach(function (k) {
+      if (k === '—') { canon[k] = '—'; return; }
+      var forms = byNorm[k].forms;
+      var best = null, bestN = -1;
+      Object.keys(forms).forEach(function (f) {
+        var n = forms[f];
+        if (n > bestN) { bestN = n; best = f; return; }
+        if (n === bestN && best && f.length > best.length) best = f;
+      });
+      canon[k] = best || '—';
+    });
+    for (var j = 0; j < rows.length; j++) {
+      var v2 = cleanVendorName(rows[j].vendedor);
+      var nk2 = normKey(v2);
+      if (!nk2) nk2 = '—';
+      rows[j].vendedor = canon[nk2] || '—';
+    }
   }
 
   function buildJoinedRow(cc, mb) {
@@ -271,14 +352,22 @@
     if (vf > 0) mPct = mbr / vf;
     else mPct = NaN;
     var vendedor = '—';
-    if (cc.vendedor && cc.vendedor !== '—') vendedor = cc.vendedor;
-    else if (mb.vendedor && mb.vendedor !== '—') vendedor = mb.vendedor;
+    if (cc.vendedor && cc.vendedor !== '—') vendedor = cleanVendorName(cc.vendedor);
+    else if (mb.vendedor && mb.vendedor !== '—') vendedor = cleanVendorName(mb.vendedor);
     var dif = isNaN(fr) || isNaN(fe) ? NaN : (fr - fe);
     var pot = isNaN(fe) || isNaN(fr) ? NaN : (fe - fr);
+    var ca = (cc.cliente && String(cc.cliente) !== '—') ? String(cc.cliente).trim() : '';
+    var cmb = (mb.cliente && String(mb.cliente) !== '—') ? String(mb.cliente).trim() : '';
+    var clienteOut = cmb;
+    if (ca) {
+      if (!cmb) clienteOut = ca;
+      else if (looksLikeClientId(ca) && !looksLikeClientId(cmb) && cmb.length > 2) clienteOut = cmb;
+      else clienteOut = ca;
+    } else if (!cmb) clienteOut = '—';
     return {
       key: cc.key,
-      codigo: cc.codigo && cc.codigo !== '—' ? cc.codigo : (mb.codigo || '—'),
-      cliente: (cc.cliente && String(cc.cliente) !== '—' ? cc.cliente : (mb.cliente || '—')) + '',
+      codigo: (cc.codigo && String(cc.codigo).trim() && cc.codigo !== '—') ? String(cc.codigo).trim() : (mb.codigo && String(mb.codigo).trim() ? String(mb.codigo).trim() : '—'),
+      cliente: String(clienteOut),
       vendedor: vendedor,
       publico: cc.publico,
       licitacion: cc.licitacion,
@@ -417,6 +506,7 @@
   // --- UI: formateo ---
   function fmtPct(x) { if (isNaN(x)) return '—'; return (x * 100).toFixed(1) + '%'; }
   function fmtMoney(x) { if (isNaN(x)) return '—'; return new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 }).format(x); }
+  function fmtInt(x) { if (isNaN(x)) return '—'; return new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 }).format(Math.round(x)); }
 
   // --- render ---
   function showSections(show) {
@@ -445,17 +535,15 @@
   }
 
   function readThresholdsFromUI() {
-    var a = document.getElementById('threshold-cumplimiento');
-    var b = document.getElementById('threshold-margen');
-    if (a) state.cumpCut = a.value;
-    if (b) state.margCut = b.value;
+    state.cumpCut = 'median';
+    state.margCut = 'median';
   }
 
   function renderKPIs(rows) {
     var k = kpiSums(rows);
     var items = [
-      { label: 'Clientes', v: String(k.totalCl), c: '' },
-      { label: 'Contratos (total)', v: String(Math.round(k.tco)), c: '' },
+      { label: 'Clientes', v: fmtInt(k.totalCl), c: '' },
+      { label: 'Contratos (total)', v: fmtInt(k.tco), c: '' },
       { label: 'Fact. esperada', v: fmtMoney(k.te), c: '' },
       { label: 'Fact. real', v: fmtMoney(k.tr), c: '' },
       { label: 'Cumpl. ponderado', v: isNaN(k.cumpPond) ? '—' : fmtPct(k.cumpPond), c: isNaN(k.cumpPond) ? '' : (k.cumpPond < 0.9 ? 'warn' : 'ok') },
@@ -475,60 +563,331 @@
     var k = kpiSums(rows);
     var ul = document.getElementById('insight-list');
     var t = [];
-    t.push('Brecha de contrato: potencial agregado (suma de max(0, fact. esperada − real)) pesa ' + (function () {
-      var s = 0; for (var i = 0; i < rows.length; i++) s += isNaN(rows[i].pot) || rows[i].pot < 0 ? 0 : rows[i].pot; return fmtMoney(s);
-    }()) + ' en términos de facturación no materializada aún (según cálculo de potencial de línea).');
-    if (!isNaN(k.margPond) && k.margPond < 0.12) t.push('Margen % agregado por debajo del 12%: presión de rentabilidad a nivel de cartera.');
-    if (k.oppN > 0) t.push(k.oppN + ' clientes combinan buena tasa de margen con bajo avance de cumplimiento: priorizar cierre comercial o condiciones de contrato.');
+    var sumPot = 0, nBrecha = 0;
+    for (var i0 = 0; i0 < rows.length; i0++) {
+      var p0 = rows[i0].pot;
+      if (!isNaN(p0) && p0 > 0) { sumPot += p0; nBrecha += 1; }
+    }
+    var te = k.te;
+    if (sumPot > 0.5) {
+      var shareMeta = (te > 0) ? (sumPot / te) * 100 : NaN;
+      var a = 'Aún faltan unos ' + fmtMoney(sumPot) + ' para alinear lo facturado con la meta (diferencia sumada solo en clientes donde el real aún queda bajo el esperado).';
+      if (!isNaN(shareMeta) && te > 0) a += ' Eso ronda el ' + shareMeta.toFixed(0) + '% de la facturación meta total, así que pesa con fuerza en el cierre hacia el objetivo.';
+      a += ' Aplica a ' + nBrecha + (nBrecha === 1 ? ' cliente' : ' clientes') + '. Revisa oportunidades (tabla) y el mapa para bajar de ahí, no en promedio.';
+      t.push(a);
+    } else {
+      t.push('A nivel de cartera, la facturación real y la meta casi se compensan: no se ve un hueco agregado. Igual mira al detalle: detrás de un promedio “bueno” a veces se esconde unos pocos clientes muy atrasados.');
+    }
+    if (!isNaN(k.cumpPond)) {
+      if (k.cumpPond < 0.9) t.push('Cumplimiento comercial (ponderado): ' + fmtPct(k.cumpPond) + ', por debajo del 90% respecto a la meta agregada: conviene asegurar cierre o revisar riesgo en las cuentas atrasadas.');
+      else t.push('Cumplimiento comercial (ponderado) en rango aceptable: ' + fmtPct(k.cumpPond) + ' frente a la meta, salvo excepciones que aún muestre el mapa o la tabla de riesgos.');
+    }
+    var conPot = rows.filter(function (r) { return !isNaN(r.pot) && r.pot > 0; });
+    conPot.sort(function (a, b) { return b.pot - a.pot; });
+    if (conPot.length >= 1) {
+      var nShow3 = Math.min(3, conPot.length);
+      var parts2 = [];
+      for (var h2 = 0; h2 < nShow3; h2++) {
+        var r = conPot[h2];
+        var nm = String(r.cliente || r.codigo || '—');
+        if (nm.length > 40) nm = nm.substring(0, 37) + '…';
+        parts2.push(nm + ' (' + fmtMoney(r.pot) + ')');
+      }
+      var tail = conPot.length > 3 ? ' Además, ' + (conPot.length - 3) + ' con brecha en cifra menor, pero a seguir al radar.' : '';
+      t.push('Cuentas con mayor atraso hacia la meta (por monto a recuperar): ' + parts2.join(' · ') + '.' + tail);
+    }
+    if (!isNaN(k.margPond) && k.margPond < 0.12) t.push('Margen % de la cartera por debajo del 12%: presión de rentabilidad en el agregado; revisa precio y mix con margen aceptable.');
+    if (k.oppN > 0) t.push(k.oppN + ' cliente' + (k.oppN === 1 ? '' : 's') + ' con buen margen pero bajo avance hacia la meta: prioridad comercial o de condición de contrato (cuadrante Oportunidad en el mapa).');
     ul.innerHTML = t.map(function (x) { return '<li>' + x + '</li>'; }).join('');
   }
 
-  var COL = { ideal: '#22c55e', opp: '#f59e0b', prices: '#60a5fa', urgent: '#ef4444', none: '#6b7280' };
+  var COL = { ideal: '#22c55e', opp: '#f59e0b', prices: '#3b82f6', urgent: '#ef4444', none: '#6b7280' };
+  var VENDOR_COLS = ['#0ea5e9', '#8b5cf6', '#f97316', '#10b981', '#ec4899', '#6366f1', '#14b8a6', '#eab308', '#64748b', '#a855f7', '#d946ef', '#0d9488'];
 
-  function maxCumpPct(rows) {
-    var m = 100;
-    for (var i = 0; i < rows.length; i++) {
-      if (!isNaN(rows[i].cump)) m = Math.max(m, rows[i].cump * 100);
+  function strHash(s) {
+    var h = 0; var u = String(s == null ? '' : s);
+    for (var i = 0; i < u.length; i++) h = ((h << 5) - h) + u.charCodeAt(i) | 0;
+    return Math.abs(h);
+  }
+
+  function getBubbleSize(r, sizeBy) {
+    var v = 12;
+    if (sizeBy === 'uniform') v = 20;
+    else if (sizeBy === 'valor_fact') v = 6 + Math.min(32, Math.sqrt(Math.max(0, +r.valor_fact || 0) / 3e3) * 2.2);
+    else if (sizeBy === 'contratos') v = 6 + Math.min(32, Math.sqrt(Math.max(0, +r.contratos || 0)) * 2.5);
+    else if (sizeBy === 'fact_esp') v = 6 + Math.min(32, Math.sqrt(Math.max(0, +r.fact_esp || 0) / 3e3) * 2.2);
+    else if (sizeBy === 'margen_bruto') v = 6 + Math.min(32, Math.sqrt(Math.max(0, Math.abs(+r.margen_bruto || 0)) / 1e3) * 2.2);
+    if (isNaN(v) || v < 8) v = 8;
+    if (v > 44) v = 44;
+    return v;
+  }
+
+  function colorForMapRow(r, colorBy) {
+    if (colorBy === 'quadrant') return COL[r.categoriaCode] || COL.none;
+    if (colorBy === 'vendedor') return VENDOR_COLS[strHash(r.vendedor || '—') % VENDOR_COLS.length];
+    if (colorBy === 'publico') {
+      if (r.publico === 'Público') return '#0284c7';
+      if (r.publico === 'Privado') return '#64748b';
+      return '#94a3b8';
     }
-    return m * 1.05;
+    if (colorBy === 'licitacion') {
+      if (r.licitacion === 'Sí') return '#16a34a';
+      if (r.licitacion === 'No') return '#ef4444';
+      return '#94a3b8';
+    }
+    return COL[r.categoriaCode] || '#64748b';
   }
 
-  function drawChart(rows) {
-    if (typeof Plotly === 'undefined') { console.warn('Plotly no disponible'); return; }
-    var tC = state.cumpThresh; var tM = state.margThresh;
-    if (isNaN(tC)) tC = 0.5; if (isNaN(tM)) tM = 0.1;
-    var names = { ideal: 'Ideal', opp: 'Oportunidad', prices: 'Revisar precios', urgent: 'Acción urgente', none: 'Sin dato' };
-    var data = ['ideal', 'opp', 'prices', 'urgent', 'none'].map(function (code) {
-      var subset = rows.filter(function (r) { return (r.categoriaCode || 'none') === code && !isNaN(r.cump) && !isNaN(r.margen_pct); });
-      return {
-        x: subset.map(function (r) { return r.cump * 100; }),
-        y: subset.map(function (r) { return r.margen_pct * 100; }),
-        text: subset.map(function (r) { return r.cliente || ''; }),
-        name: names[code] || code,
-        customdata: subset.map(function (r) {
-          return 'Cód: ' + (r.codigo || '—') + '<br>Vend: ' + (r.vendedor || '—') + '<br>Fact. esp.: ' + fmtMoney(r.fact_esp) + '<br>Fact. real: ' + fmtMoney(r.fact_real) +
-            '<br>M. bruto: ' + fmtMoney(r.margen_bruto) + '<br>Potencial: ' + fmtMoney(r.pot) + '<br><b>' + (r.categoria || '') + '</b>';
-        }),
-        mode: 'markers', type: 'scatter',
-        hovertemplate: '<b>' + (names[code] || code) + '</b><br>Cliente: %{text}<br>Cumpl. %: %{x:.1f}%<br>Marg. %: %{y:.1f}%<br>%{customdata}<extra></extra>',
-        marker: { size: subset.map(function (r) { return Math.sqrt(Math.max(0, r.fact_real) / 1e3) * 1.2 + 6; }), sizemode: 'diameter', color: COL[code] || '#888', line: { width: 0.5, color: '#0f1419' } }
-      };
-    });
-    var xMax = Math.max(120, maxCumpPct(rows));
-    var layout = {
-      paper_bgcolor: '#121920', plot_bgcolor: '#0f1419', font: { color: '#e8edf4' },
-      margin: { t: 40, r: 20, b: 48, l: 56 },
-      xaxis: { title: 'Cumplimiento % (real / esperado)', range: [0, xMax] },
-      yaxis: { title: 'Margen % (m.b. / valor fact.)' },
-      shapes: [
-        { type: 'line', x0: tC * 100, x1: tC * 100, y0: 0, y1: 1, yref: 'paper', line: { color: 'rgba(59,130,246,0.45)', width: 1, dash: 'dot' } },
-        { type: 'line', y0: tM * 100, y1: tM * 100, x0: 0, x1: 1, xref: 'paper', line: { color: 'rgba(245,158,11,0.4)', width: 1, dash: 'dot' } }
-      ],
-      legend: { orientation: 'h' },
-      hoverlabel: { bgcolor: '#1a222d' }
-    };
-    Plotly.react('plotly-chart', data, layout, { displayModeBar: true, responsive: true });
+  function passMapSetFilters(r) {
+    if (mapState.vend) {
+      var v = (r.vendedor || '—');
+      if (!mapState.vend.has(v)) return { ok: false, reason: 'vendedor' };
+    }
+    if (mapState.pub) {
+      var p = (r.publico || '—');
+      if (!mapState.pub.has(p)) return { ok: false, reason: 'público/privado' };
+    }
+    if (mapState.lic) {
+      var l = (r.licitacion || '—');
+      if (!mapState.lic.has(l)) return { ok: false, reason: 'licitación' };
+    }
+    return { ok: true };
   }
+
+  /**
+   * Medianas de cumpl. y margen (0–1) con datos reales, para imputar solo eje faltante (evita L en ejes a 0).
+   */
+  function computeMedianAxisImputes(allRows) {
+    var cR = [], mR = [];
+    for (var u = 0; u < allRows.length; u++) {
+      var w = allRows[u], fe = +w.fact_esp, fr = +w.fact_real, vf = +w.valor_fact, mbr = +w.margen_bruto;
+      if (fe > 0 && !isNaN(fr) && isFinite(fr) && isFinite(fe)) cR.push(fr / fe);
+      if (vf > 0 && isFinite(mbr) && isFinite(vf)) mR.push(mbr / vf);
+    }
+    var mc = medianOf(cR);
+    var mm = medianOf(mR);
+    if (isNaN(mc)) mc = 0.5;
+    if (isNaN(mm)) mm = 0.1;
+    return { imputeXPct: mc * 100, imputeYPct: mm * 100 };
+  }
+
+  /** Cumplimiento en % para eje: si no hay meta CC, se imputa mediana (no 0) para despegar del eje Y. */
+  function chartAxisCumplPct(r, imputeXPct) {
+    var v = toPercentValue(r.cump);
+    if (v != null && isFinite(v)) return v;
+    var fe = +r.fact_esp, fr = +r.fact_real;
+    if (fe > 0 && isFinite(fe) && isFinite(fr)) return (fr / fe) * 100;
+    if ((fe === 0 || isNaN(fe)) && fr > 0) return 100;
+    return imputeXPct;
+  }
+  function chartAxisMargenPct(r, imputeYPct) {
+    var v2 = toPercentValue(r.margen_pct);
+    if (v2 != null && isFinite(v2)) return v2;
+    var vf = +r.valor_fact, mb = +r.margen_bruto;
+    if (vf > 0 && isFinite(vf) && isFinite(mb)) return (mb / vf) * 100;
+    return imputeYPct;
+  }
+
+  function getChartData(allRows) {
+    var nCross = allRows && allRows.length ? allRows.length : 0;
+    var discarded = [];
+    var out = [];
+    var afterVend = 0, withXY = 0;
+    var q = (document.getElementById('map-search') && document.getElementById('map-search').value || '').trim().toLowerCase();
+    var minCRaw = document.getElementById('map-min-contratos') ? parseInt(document.getElementById('map-min-contratos').value, 10) : 0;
+    var minC = (isNaN(minCRaw) ? 0 : minCRaw);
+    minC = Math.max(0, minC);
+    var minCumpIn = document.getElementById('map-min-cump') ? document.getElementById('map-min-cump').value : '0';
+    var minCumpP = Math.max(0, Math.min(200, parseFloat(minCumpIn) || 0));
+    var colorBy = (document.getElementById('map-color-by') && document.getElementById('map-color-by').value) || 'quadrant';
+    var sizeBy = (document.getElementById('map-size-by') && document.getElementById('map-size-by').value) || 'contratos';
+    var xLog = (document.getElementById('map-x-scale') && document.getElementById('map-x-scale').value) === 'log';
+    var imputes = computeMedianAxisImputes(allRows);
+    var tCu0 = state.cumpThresh, tMu0 = state.margThresh;
+    if (isNaN(tCu0)) tCu0 = 0.5; if (isNaN(tMu0)) tMu0 = 0.1;
+    for (var j = 0; j < nCross; j++) {
+      var r2 = allRows[j];
+      var prf = passMapSetFilters(r2);
+      if (!prf.ok) {
+        discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'filtro: ' + prf.reason });
+        continue;
+      }
+      afterVend++;
+      if (q) {
+        var blob = (String(r2.cliente || '') + ' ' + String(r2.codigo || '')).toLowerCase();
+        if (blob.indexOf(q) < 0) { discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'búsqueda' }); continue; }
+      }
+      if (minC > 0 && (+r2.contratos || 0) < minC) { discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'N° contratos < mín.' }); continue; }
+      var xP = chartAxisCumplPct(r2, imputes.imputeXPct);
+      var yP = chartAxisMargenPct(r2, imputes.imputeYPct);
+      if (isNaN(xP) || isNaN(yP)) { discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'eje x/y no num.' }); continue; }
+      withXY++;
+      if (minCumpP > 0 && xP < minCumpP) { discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'cumpl. < mín. %' }); continue; }
+      if (xLog && xP <= 0) xP = 0.01;
+      var sz = getBubbleSize(r2, sizeBy);
+      if (isNaN(sz) || sz < 8) sz = 8;
+      var qMap = assignQuadrant(
+        { cump: xP / 100, margen_pct: yP / 100 },
+        tCu0, tMu0
+      );
+      var plotQ = (qMap && qMap.code) || 'none';
+      var cMark;
+      if (colorBy === 'quadrant') cMark = COL[plotQ] || COL.none;
+      else cMark = colorForMapRow(r2, colorBy);
+      out.push({
+        row: r2, x: xP, y: yP, size: sz,
+        plotQuadrantCode: plotQ, color: cMark
+      });
+    }
+    return { nCross: nCross, afterVend: afterVend, withXY: withXY, out: out, discarded: discarded, colorBy: colorBy, sizeBy: sizeBy, xLog: xLog, minCumpP: minCumpP, minC: minC, q: q };
+  }
+
+  function debugChartData(g, allRows) {
+    console.log('[Mapa 5] Registros cruzados (total filas):', g.nCross);
+    console.log('[Mapa 5] Tras chips vendedor / público / licitación:', g.afterVend);
+    console.log('[Mapa 5] Con cumpl. y margen % válidos (tras búsq./N° ctes., antes corte cumpl. mín.):', g.withXY);
+    console.log('[Mapa 5] Puntos finales a Plotly (tras cumpl. mín. y eje log):', g.out.length);
+    var sample = g.out.slice(0, 5).map(function (o) { return { cliente: o.row.cliente, x: o.x, y: o.y, cump: o.row.cump, marg: o.row.margen_pct }; });
+    console.log('[Mapa 5] Primeros 5 puntos enviados a Plotly:', sample);
+    var d = g.discarded;
+    if (d && d.length) {
+      var by = {};
+      for (var k = 0; k < d.length; k++) { var rs = d[k].reason; by[rs] = (by[rs] || 0) + 1; }
+      console.log('[Mapa 5] Registros descartados (conteo por motivo):', by);
+    } else console.log('[Mapa 5] Registros descartados: ninguno');
+  }
+
+  function buildMapPointHover(o) {
+    var r = o.row;
+    return [
+      (r.cliente || '—'), 'Cód: ' + (r.codigo || '—'), 'Vend: ' + (r.vendedor || '—'),
+      'Publ./priv.: ' + (r.publico || '—'), 'Licit.: ' + (r.licitacion || '—'),
+      'Cumpl. %: ' + o.x.toFixed(1), 'Margen %: ' + o.y.toFixed(1),
+      'Fact. esp.: ' + fmtMoney(r.fact_esp), 'Fact. real: ' + fmtMoney(r.fact_real),
+      'Val. fact. MB: ' + fmtMoney(r.valor_fact), 'M. bruto: ' + fmtMoney(r.margen_bruto),
+      'Potencial: ' + fmtMoney(r.pot), 'Categoría: ' + (r.categoria || '—')
+    ].join('<br>');
+  }
+
+  function buildPlotlyFromGetChartData(g) {
+    var tC = state.cumpThresh, tM = state.margThresh;
+    if (isNaN(tC)) tC = 0.5; if (isNaN(tM)) tM = 0.1;
+    var tCx = tC * 100, tMy = tM * 100;
+    var qNames = { ideal: 'Ideal', opp: 'Oportunidad', prices: 'Revisar precios', urgent: 'Acción urgente', none: 'Sin dato' };
+    var out = g.out, colorBy = g.colorBy, xLog = g.xLog;
+    var codes = ['ideal', 'opp', 'prices', 'urgent', 'none'];
+    var data = [];
+    if (colorBy === 'quadrant') {
+      for (var c2 = 0; c2 < codes.length; c2++) {
+        var code2 = codes[c2];
+        var sel2 = out.filter(function (o) { return (o.plotQuadrantCode || o.row.categoriaCode || 'none') === code2; });
+        if (!sel2.length) continue;
+        var lab = qNames[code2] || code2;
+        var prefix = '<b>' + lab + '</b><br>';
+        data.push({
+          x: sel2.map(function (o) { return o.x; }),
+          y: sel2.map(function (o) { return o.y; }),
+          text: sel2.map(function (o) { return o.row.cliente || ''; }),
+          name: lab,
+          mode: 'markers',
+          type: 'scatter',
+          hovertext: sel2.map(function (o) { return prefix + buildMapPointHover(o); }),
+          hoverinfo: 'text',
+          hovertemplate: '%{hovertext}<extra></extra>',
+          marker: {
+            size: sel2.map(function (o) { return o.size; }),
+            sizemode: 'diameter',
+            sizemin: 8,
+            color: COL[code2] || '#888',
+            line: { width: 0.8, color: 'rgba(255,255,255,0.2)' }
+          }
+        });
+      }
+    } else if (out.length) {
+      data.push({
+        x: out.map(function (o) { return o.x; }),
+        y: out.map(function (o) { return o.y; }),
+        text: out.map(function (o) { return o.row.cliente || ''; }),
+        name: 'Clientes',
+        mode: 'markers',
+        type: 'scatter',
+        showlegend: false,
+        hovertext: out.map(buildMapPointHover),
+        hoverinfo: 'text',
+        hovertemplate: '%{hovertext}<extra></extra>',
+        marker: {
+          size: out.map(function (o) { return o.size; }),
+          sizemode: 'diameter',
+          sizemin: 8,
+          color: out.map(function (o) { return o.color; }),
+          line: { width: 0.6, color: 'rgba(255,255,255,0.2)' }
+        }
+      });
+    }
+    var lineMed = { color: 'rgba(148,163,184,0.6)', width: 1, dash: 'dash' };
+    var cornerAnnot = [
+      { xref: 'paper', yref: 'paper', x: 0.99, y: 0.98, xanchor: 'right', yanchor: 'top', text: 'Ideal', showarrow: false, font: { size: 11, color: '#22c55e' } },
+      { xref: 'paper', yref: 'paper', x: 0.01, y: 0.98, xanchor: 'left', yanchor: 'top', text: 'Oportunidad', showarrow: false, font: { size: 11, color: '#f59e0b' } },
+      { xref: 'paper', yref: 'paper', x: 0.99, y: 0.04, xanchor: 'right', yanchor: 'bottom', text: 'Revisar precios', showarrow: false, font: { size: 11, color: '#3b82f6' } },
+      { xref: 'paper', yref: 'paper', x: 0.01, y: 0.04, xanchor: 'left', yanchor: 'bottom', text: 'Acción urgente', showarrow: false, font: { size: 11, color: '#ef4444' } }
+    ];
+    return { data: data, layout: {
+      paper_bgcolor: '#1a222d', plot_bgcolor: '#121920',
+      font: { color: '#e8edf4', size: 12 },
+      margin: { t: 44, r: 20, b: 56, l: 64 },
+      xaxis: {
+        title: { text: 'Cumplimiento de contrato (%)' },
+        type: xLog ? 'log' : 'linear',
+        autorange: true,
+        showgrid: true,
+        gridcolor: 'rgba(45,58,74,0.85)',
+        zeroline: true, zerolinecolor: 'rgba(100,116,139,0.4)'
+      },
+      yaxis: {
+        title: { text: 'Margen / ventas %' },
+        type: 'linear',
+        autorange: true,
+        showgrid: true,
+        gridcolor: 'rgba(45,58,74,0.85)',
+        zeroline: true, zerolinecolor: 'rgba(100,116,139,0.4)'
+      },
+      legend: { orientation: 'h', yanchor: 'bottom', y: 1.12, x: 0, font: { size: 11, color: '#e8edf4' } },
+      shapes: [
+        { type: 'line', x0: tCx, x1: tCx, y0: 0, y1: 1, yref: 'paper', line: lineMed },
+        { type: 'line', y0: tMy, y1: tMy, x0: 0, x1: 1, xref: 'paper', line: lineMed }
+      ],
+      annotations: cornerAnnot,
+      hoverlabel: { bgcolor: '#0f1419', bordercolor: '#2d3a4a', font: { color: '#e8edf4' } }
+    } };
+  }
+
+  function updateMapMedianBar() {
+    var el = document.getElementById('map-median-text');
+    if (!el) return;
+    var tC = state.cumpThresh, tM = state.margThresh;
+    if (isNaN(tC)) tC = 0.5; if (isNaN(tM)) tM = 0.1;
+    el.textContent = 'Líneas de mediana: Cumplimiento = ' + (tC * 100).toFixed(1) + '%, margen = ' + (tM * 100).toFixed(1) + '% (cartera completa).';
+  }
+
+  function updateStrategicMap() {
+    var box = document.getElementById('strategic-map-empty');
+    updateMapMedianBar();
+    if (typeof Plotly === 'undefined') { console.warn('Plotly no disponible'); if (box) { box.hidden = false; box.textContent = 'No se pudo cargar Plotly.'; } return; }
+    var R = state.rows; if (!R) return;
+    var g = getChartData(R);
+    debugChartData(g, R);
+    if (g.out.length === 0) {
+      if (box) { box.hidden = false; box.textContent = 'No hay clientes graficables con los filtros actuales.'; }
+      try { Plotly.purge('plotly-chart'); } catch (e) {}
+    } else {
+      if (box) box.hidden = true;
+      var b = buildPlotlyFromGetChartData(g);
+      if (!b.data.length) { if (box) { box.hidden = false; } try { Plotly.purge('plotly-chart'); } catch (e2) {} return; }
+      Plotly.react('plotly-chart', b.data, b.layout, { displayModeBar: true, responsive: true });
+    }
+  }
+
+  function drawChart(rows) { updateStrategicMap(); }
 
   function buildRiskList(rows) {
     var byKey = {};
@@ -595,6 +954,24 @@
   function distinctVals(rows, fn) {
     var s = {}; for (var i = 0; i < rows.length; i++) { s[fn(rows[i])] = 1; }
     return Object.keys(s).sort();
+  }
+
+  function topVendorVals(rows, limit) {
+    var n = limit || 3;
+    var cnt = {};
+    for (var i = 0; i < rows.length; i++) {
+      var v = String(rows[i].vendedor || '—').trim();
+      if (!v) v = '—';
+      cnt[v] = (cnt[v] || 0) + 1;
+    }
+    var names = Object.keys(cnt).filter(function (v2) { return v2 !== '—'; });
+    names.sort(function (a, b) {
+      var d = (cnt[b] || 0) - (cnt[a] || 0);
+      if (d !== 0) return d;
+      return a.localeCompare(b, 'es', { sensitivity: 'base' });
+    });
+    if (!names.length) return [];
+    return names.slice(0, n);
   }
 
   function populateFilters(rows) {
@@ -685,8 +1062,158 @@
   }
 
   function runFullRender() {
+    if (state.rows) {
+      buildVendChipsFromRows(state.rows);
+      resetMapFilters();
+      configureMapSlidersFromRows(state.rows);
+      updateMapChipCounts(state.rows);
+    }
     refreshView();
     if (state.rows) populateFilters(state.rows);
+  }
+
+  function syncSliderLabels() {
+    var c = document.getElementById('map-min-contratos');
+    var cu = document.getElementById('map-min-cump');
+    var lv = document.getElementById('map-min-contratos-val');
+    var lcu = document.getElementById('map-min-cump-val');
+    if (c && lv) lv.textContent = c.value;
+    if (cu && lcu) lcu.textContent = cu.value;
+  }
+
+  function configureMapSlidersFromRows(rows) {
+    if (!rows || !rows.length) return;
+    var mx = 1;
+    for (var i = 0; i < rows.length; i++) mx = Math.max(mx, Math.ceil(Math.max(0, +rows[i].contratos || 0)));
+    mx = Math.min(200, Math.max(50, mx));
+    var el = document.getElementById('map-min-contratos');
+    if (el && el.type === 'range') {
+      el.min = '0';
+      el.max = String(mx);
+      if (+el.value > mx) el.value = String(mx);
+    }
+    syncSliderLabels();
+  }
+
+  function resetMapFilters() {
+    mapState = { vend: null, pub: null, lic: null };
+    var ms = document.getElementById('map-search'); if (ms) ms.value = '';
+    var mc = document.getElementById('map-min-contratos'); if (mc) { mc.value = '0'; if (mc.type === 'range' && +mc.value > +mc.max) mc.value = mc.max; }
+    var mcu = document.getElementById('map-min-cump'); if (mcu) mcu.value = '0';
+    var cby = document.getElementById('map-color-by'); if (cby) cby.value = 'quadrant';
+    var sby = document.getElementById('map-size-by'); if (sby) sby.value = 'contratos';
+    var xsc = document.getElementById('map-x-scale'); if (xsc) xsc.value = 'linear';
+    syncSliderLabels();
+    syncMapChipUI();
+  }
+
+  function countBy(rows, fn) {
+    var o = {};
+    for (var i = 0; i < rows.length; i++) {
+      var k = fn(rows[i]);
+      o[k] = (o[k] || 0) + 1;
+    }
+    return o;
+  }
+
+  function updateMapChipCounts(rows) {
+    if (!rows) return;
+    var cv = countBy(rows, function (r) { return r.vendedor || '—'; });
+    var cpub = countBy(rows, function (r) { return r.publico || '—'; });
+    var clic = countBy(rows, function (r) { return r.licitacion || '—'; });
+    document.querySelectorAll('#map-chips-vend [data-cnt-v]').forEach(function (el) {
+      var k = el.getAttribute('data-cnt-v');
+      el.textContent = '(' + (cv[k] || 0) + ')';
+    });
+    var aPub = cpub['Público'] || 0, aPrv = cpub['Privado'] || 0;
+    var elPub = document.querySelector('#map-chips-pub [data-cnt="pub:Publico"]');
+    var elPrv = document.querySelector('#map-chips-pub [data-cnt="pub:Privado"]');
+    if (elPub) elPub.textContent = '(' + aPub + ')';
+    if (elPrv) elPrv.textContent = '(' + aPrv + ')';
+    var aSi = clic['Sí'] || 0, aNo = clic['No'] || 0;
+    var elS = document.querySelector('#map-chips-lic [data-cnt="lic:Si"]');
+    var elN = document.querySelector('#map-chips-lic [data-cnt="lic:No"]');
+    if (elS) elS.textContent = '(' + aSi + ')';
+    if (elN) elN.textContent = '(' + aNo + ')';
+  }
+
+  function buildVendChipsFromRows(rows) {
+    var wrap = document.getElementById('map-chips-vend');
+    if (!wrap) return;
+    var d = topVendorVals(rows, 3);
+    wrap.textContent = '';
+    if (!d.length) {
+      var b0 = document.createElement('button');
+      b0.type = 'button';
+      b0.className = 'map-chip';
+      b0.disabled = true;
+      b0.textContent = 'Sin dato de vendedor';
+      wrap.appendChild(b0);
+      return;
+    }
+    for (var i = 0; i < d.length; i++) {
+      var v = d[i], vs = String(v);
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'map-chip';
+      b.setAttribute('data-vend', vs);
+      b.setAttribute('aria-pressed', 'false');
+      b.appendChild(document.createTextNode(vs + ' '));
+      var sp = document.createElement('span');
+      sp.className = 'chip-cnt';
+      sp.setAttribute('data-cnt-v', vs);
+      sp.textContent = '(0)';
+      b.appendChild(sp);
+      wrap.appendChild(b);
+    }
+  }
+
+  function syncMapChipUI() {
+    var tv = document.getElementById('map-vend-todos');
+    if (tv) { tv.classList.toggle('is-active', !mapState.vend); }
+    document.querySelectorAll('#map-chips-vend [data-vend]').forEach(function (b) {
+      var v = b.getAttribute('data-vend');
+      var on = mapState.vend && mapState.vend.has(v);
+      b.classList.toggle('is-active', !!on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    var tPub = document.getElementById('map-pub-todos');
+    if (tPub) tPub.classList.toggle('is-active', !mapState.pub);
+    document.querySelectorAll('#map-chips-pub [data-pub]').forEach(function (b) {
+      var p = b.getAttribute('data-pub');
+      if (p === 'all') return;
+      var on = mapState.pub && mapState.pub.has(p);
+      b.classList.toggle('is-active', !!on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    var tLic = document.getElementById('map-lic-todos');
+    if (tLic) tLic.classList.toggle('is-active', !mapState.lic);
+    document.querySelectorAll('#map-chips-lic [data-lic]').forEach(function (b) {
+      var p = b.getAttribute('data-lic');
+      if (p === 'all') return;
+      var on = mapState.lic && mapState.lic.has(p);
+      b.classList.toggle('is-active', !!on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  function exportMapCSV() {
+    if (!state.rows) return;
+    var g = getChartData(state.rows);
+    if (!g.out.length) return;
+    var h = 'Cliente;Código;Cumpl %;Margen %;Vendedor;Público/priv.;Licitación;Fact. esp.;Fact. real;Val. fact. MB;M. bruto;Potencial;Categoría\n';
+    var b = h + g.out.map(function (o) {
+      var r = o.row;
+      return [r.cliente, r.codigo, o.x.toFixed(1), o.y.toFixed(1), r.vendedor, r.publico, r.licitacion,
+        isNaN(r.fact_esp) ? '' : r.fact_esp, isNaN(r.fact_real) ? '' : r.fact_real, isNaN(r.valor_fact) ? '' : r.valor_fact,
+        isNaN(r.margen_bruto) ? '' : r.margen_bruto, isNaN(r.pot) ? '' : r.pot, r.categoria
+      ].map(function (c) { return (c == null ? '' : String(c).replace(/[;\n\r]/g, ' ')); }).join(';');
+    }).join('\n');
+    var link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([ '\ufeff' + b ], { type: 'text/csv;charset=utf-8;' }));
+    link.download = 'mapa_estrategico_filtro.csv';
+    link.click();
+    setTimeout(function () { URL.revokeObjectURL(link.href); }, 3000);
   }
 
   function exportCSV() {
@@ -765,17 +1292,98 @@
     };
   }
 
+  function handleMapVendClick(dv) {
+    if (dv === 'all') mapState.vend = null;
+    else {
+      if (!mapState.vend) mapState.vend = new Set();
+      if (mapState.vend.has(dv)) mapState.vend.delete(dv); else mapState.vend.add(dv);
+      if (mapState.vend.size === 0) mapState.vend = null;
+    }
+    syncMapChipUI();
+    if (state.rows) updateMapChipCounts(state.rows);
+    updateStrategicMap();
+  }
+  function handleMapPubClick(p) {
+    if (p === 'all') mapState.pub = null;
+    else {
+      if (!mapState.pub) mapState.pub = new Set();
+      if (mapState.pub.has(p)) mapState.pub.delete(p); else mapState.pub.add(p);
+      if (mapState.pub.size === 0) mapState.pub = null;
+    }
+    syncMapChipUI();
+    if (state.rows) updateMapChipCounts(state.rows);
+    updateStrategicMap();
+  }
+  function handleMapLicClick(l) {
+    if (l === 'all') mapState.lic = null;
+    else {
+      if (!mapState.lic) mapState.lic = new Set();
+      if (mapState.lic.has(l)) mapState.lic.delete(l); else mapState.lic.add(l);
+      if (mapState.lic.size === 0) mapState.lic = null;
+    }
+    syncMapChipUI();
+    if (state.rows) updateMapChipCounts(state.rows);
+    updateStrategicMap();
+  }
+
+  function wireMapSection() {
+    var sec = document.getElementById('section-chart');
+    if (sec) {
+      sec.addEventListener('click', function (ev) {
+        var t = ev.target;
+        if (t && t.classList && t.classList.contains('map-todos-link')) {
+          ev.preventDefault();
+          var w = t.getAttribute('data-todos');
+          if (w === 'vend') handleMapVendClick('all');
+          else if (w === 'pub') handleMapPubClick('all');
+          else if (w === 'lic') handleMapLicClick('all');
+          return;
+        }
+        if (!t || !t.closest) return;
+        var chip = t.closest('.map-chip');
+        if (!chip || !sec.contains(chip)) return;
+        if (chip.hasAttribute('data-vend')) {
+          ev.preventDefault();
+          handleMapVendClick(chip.getAttribute('data-vend'));
+          return;
+        }
+        if (chip.hasAttribute('data-pub')) {
+          ev.preventDefault();
+          handleMapPubClick(chip.getAttribute('data-pub'));
+          return;
+        }
+        if (chip.hasAttribute('data-lic')) {
+          ev.preventDefault();
+          handleMapLicClick(chip.getAttribute('data-lic'));
+        }
+      });
+    }
+    var ms = document.getElementById('map-search');
+    if (ms) ms.addEventListener('input', function () { if (state && state.rows) updateStrategicMap(); });
+    var mcr = document.getElementById('map-min-contratos');
+    if (mcr) {
+      mcr.addEventListener('input', function () { syncSliderLabels(); if (state && state.rows) updateStrategicMap(); });
+    }
+    var mcu2 = document.getElementById('map-min-cump');
+    if (mcu2) {
+      mcu2.addEventListener('input', function () { syncSliderLabels(); if (state && state.rows) updateStrategicMap(); });
+    }
+    ['map-color-by', 'map-size-by', 'map-x-scale'].forEach(function (id) {
+      var s = document.getElementById(id);
+      if (s) s.addEventListener('change', function () { if (state && state.rows) updateStrategicMap(); });
+    });
+    var br = document.getElementById('map-btn-reset');
+    if (br) br.addEventListener('click', function () { if (state.rows) { resetMapFilters(); if (state.rows) configureMapSlidersFromRows(state.rows); updateMapChipCounts(state.rows); } updateStrategicMap(); });
+    var be = document.getElementById('map-btn-export');
+    if (be) be.addEventListener('click', exportMapCSV);
+  }
+
   function wireEvents() {
     var fc = document.getElementById('file-cc');
     var fm = document.getElementById('file-mb');
     if (fc) fc.addEventListener('change', handleFileInput('cc'));
     if (fm) fm.addEventListener('change', handleFileInput('mb'));
-    var btnR = document.getElementById('btn-refresh-quadrants');
-    if (btnR) btnR.addEventListener('click', function () { if (state.rows) refreshView(); });
-    var tc = document.getElementById('threshold-cumplimiento');
-    var tm = document.getElementById('threshold-margen');
-    if (tc) tc.addEventListener('change', function () { if (state.rows) refreshView(); });
-    if (tm) tm.addEventListener('change', function () { if (state.rows) refreshView(); });
+    wireMapSection();
     var exp = document.getElementById('btn-export-csv');
     if (exp) exp.addEventListener('click', exportCSV);
     var fSearch = document.getElementById('table-search');
