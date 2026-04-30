@@ -286,6 +286,8 @@
   }
 
   function mergeData(cc, mb) {
+    // Une CC y MB por clave de cliente; si falta uno de los lados, crea un registro "vacío"
+    // para conservar la cartera completa en análisis y tablas.
     var m = {};
     for (var i = 0; i < cc.length; i++) { m[cc[i].key] = { cc: cc[i] }; }
     for (var j = 0; j < mb.length; j++) {
@@ -342,6 +344,9 @@
 
 
   function buildJoinedRow(cc, mb) {
+    // Métricas base del dashboard:
+    // - cump: avance de contrato (real/esperado)
+    // - margen_pct: rentabilidad (margen bruto/valor facturado)
     var fe = +cc.fact_esp;
     var fr = +cc.fact_real;
     var vf = +mb.valor;
@@ -445,6 +450,7 @@
 
   // --- KPIs y resumen global ---
   function kpiSums(rows) {
+    // Agregados globales usados por KPI cards, resumen ejecutivo e insights.
     var te = 0, tr = 0, tmb = 0, tf = 0, tco = 0, negM = 0, oppN = 0, urgN = 0, totalCl = rows.length;
     for (var j = 0; j < rows.length; j++) {
       var rr = rows[j];
@@ -519,6 +525,7 @@
   }
 
   function renderExec(rows) {
+    // Resumen ejecutivo (punto 2): frases gerenciales calculadas con indicadores agregados.
     var k = kpiSums(rows);
     var c5 = topShare(rows, 5, function (r) { return r.fact_real; });
     var c10 = topShare(rows, 10, function (r) { return r.fact_real; });
@@ -561,6 +568,7 @@
   }
 
   function renderInsights(rows) {
+    // Insights automáticos (punto 4): detecta brechas, cuentas críticas y señales de margen.
     var k = kpiSums(rows);
     var ul = document.getElementById('insight-list');
     var t = [];
@@ -690,6 +698,8 @@
   }
 
   function getChartData(allRows) {
+    // Construye dataset final para Plotly aplicando:
+    // 1) chips/filtros, 2) búsqueda, 3) umbrales, 4) ejes y tamaño/color de burbuja.
     var nCross = allRows && allRows.length ? allRows.length : 0;
     var discarded = [];
     var out = [];
@@ -771,6 +781,7 @@
   }
 
   function buildPlotlyFromGetChartData(g) {
+    // Arma trazas/layout del mapa estratégico (punto 5) con líneas de mediana por cartera completa.
     var tC = state.cumpThresh, tM = state.margThresh;
     if (isNaN(tC)) tC = 0.5; if (isNaN(tM)) tM = 0.1;
     var tCx = tC * 100, tMy = tM * 100;
@@ -1244,6 +1255,12 @@
 
   function runPipeline() {
     if (!state.rawCC || !state.rawMB) return;
+    // Pipeline principal:
+    // - leer matrices
+    // - mapear columnas por heurística
+    // - validar mínimos requeridos
+    // - agregar y cruzar CC + MB
+    // - renderizar todo el dashboard
     var cco = matrixToObjects(state.rawCC.matrix);
     var mbo = matrixToObjects(state.rawMB.matrix);
     var ccm = mapColumnsCC(cco.headers);
