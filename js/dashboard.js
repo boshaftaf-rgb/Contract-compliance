@@ -23,8 +23,90 @@ import { processCommercialExcels } from "./core/index.js";
     validationSummary: null
   };
 
-  /** Filtros solo seccion 5. vend/pub/lic: null = mostrar todos; Set = OR dentro del tipo */
-  var mapState = { vend: null, pub: null, lic: null, search: '', minC: 0, minCump: 0, colorBy: 'quadrant', sizeBy: 'contratos', xLog: false };
+  /**
+   * Filtros sección 5 (mapa estratégico): territorio, público/privado, licitación.
+   * null = todos; Set = OR dentro de cada dimensión.
+   */
+  var mapState = { territory: null, pub: null, lic: null, search: '', minC: 0, minCump: 0, colorBy: 'quadrant', sizeBy: 'contratos', xLog: false };
+
+  /** Etiqueta unificada cuando no hay territorio en datos. */
+  var SIN_TERRITORIO = 'Sin territorio';
+
+  /** Coincide con `data-todos` del botón «Todos» de la tarjeta Territorio en index.html (histórico: vend). */
+  var MAP_TERRITORY_TODOS_DOM = 'vend';
+
+  /** Coincide con `value` de la opción «Territorio» en `#map-color-by` en index.html (histórico: vendedor). */
+  var MAP_COLOR_BY_TERRITORY_SELECT_VALUE = 'vendedor';
+
+  function isBlankTerritoryValue(v) {
+    if (v == null) return true;
+    var s = String(v).trim();
+    if (!s) return true;
+    if (s === '—' || s === '-' || s === '–') return true;
+    return false;
+  }
+
+  function normalizeDashboardTerritoryLabel(v) {
+    if (isBlankTerritoryValue(v)) return SIN_TERRITORIO;
+    return String(v).trim();
+  }
+
+  /**
+   * Solo capa dashboard: índice customer_code → territorio desde filas ya normalizadas del motor.
+   * Última fila gana si hay duplicados de código.
+   */
+  function buildTerritoryByCustomerCodeFromSales(territorySalesRows) {
+    var map = {};
+    var arr = Array.isArray(territorySalesRows) ? territorySalesRows : [];
+    for (var i = 0; i < arr.length; i++) {
+      var row = arr[i];
+      var code = String(row.customer_code != null ? row.customer_code : '');
+      if (!code) continue;
+      if (isBlankTerritoryValue(row.territory)) continue;
+      map[code] = String(row.territory).trim();
+    }
+    return map;
+  }
+
+  function resolveDashboardTerritoryForCustomer(customer, territoryByCode) {
+    var code = String(customer.customer_code != null ? customer.customer_code : '');
+    if (!isBlankTerritoryValue(customer.territory)) return normalizeDashboardTerritoryLabel(customer.territory);
+    var fromSales = code ? territoryByCode[code] : undefined;
+    if (!isBlankTerritoryValue(fromSales)) return normalizeDashboardTerritoryLabel(fromSales);
+    return SIN_TERRITORIO;
+  }
+
+  function logTerritoryDashboardDebug(territorySalesRows, territoryByCode, rows) {
+    var ts = Array.isArray(territorySalesRows) ? territorySalesRows : [];
+    var uniq = {};
+    for (var u = 0; u < ts.length; u++) {
+      var tv = ts[u].territory;
+      if (!isBlankTerritoryValue(tv)) uniq[String(tv).trim()] = 1;
+    }
+    var uniqKeys = Object.keys(uniq).sort(function (a, b) { return a.localeCompare(b, 'es', { sensitivity: 'base' }); });
+    var pairs = [];
+    var seenSig = {};
+    for (var p = 0; p < ts.length && pairs.length < 10; p++) {
+      var tr = ts[p];
+      var cc = String(tr.customer_code != null ? tr.customer_code : '');
+      if (!cc || isBlankTerritoryValue(tr.territory)) continue;
+      var sig = cc + '\t' + String(tr.territory).trim();
+      if (seenSig[sig]) continue;
+      seenSig[sig] = 1;
+      pairs.push(cc + ' → ' + String(tr.territory).trim());
+    }
+    var withT = 0, sinT = 0;
+    for (var r = 0; r < rows.length; r++) {
+      if ((rows[r].territory || SIN_TERRITORIO) === SIN_TERRITORIO) sinT += 1;
+      else withT += 1;
+    }
+    console.log('[Mapa 5][Territorio] registros en analysisData.territorySales:', ts.length);
+    console.log('[Mapa 5][Territorio] códigos cliente con territorio en lookup (desde ventas):', Object.keys(territoryByCode || {}).length);
+    console.log('[Mapa 5][Territorio] territorios únicos (valores en ventas):', uniqKeys.length, uniqKeys);
+    console.log('[Mapa 5][Territorio] primeros 10 pares customer_code → territory (desde territorySales):', pairs);
+    console.log('[Mapa 5][Territorio] clientes filas dashboard con territorio distinto de «' + SIN_TERRITORIO + '»:', withT);
+    console.log('[Mapa 5][Territorio] clientes en «' + SIN_TERRITORIO + '»:', sinT);
+  }
 
   function finiteNumber(value) {
     if (value === null || value === undefined || value === '') return NaN;
@@ -79,6 +161,8 @@ import { processCommercialExcels } from "./core/index.js";
 
   function mapAnalysisDataToDashboardModel(analysisData) {
     var customers = analysisData && Array.isArray(analysisData.customers) ? analysisData.customers : [];
+    var territorySalesSrc = analysisData && Array.isArray(analysisData.territorySales) ? analysisData.territorySales : [];
+    var territoryByCustomerCode = buildTerritoryByCustomerCodeFromSales(territorySalesSrc);
     var rows = customers.map(function (c) {
       var factEsp = finiteNumber(c.facturacion_esperada_total);
       var factReal = finiteNumber(c.facturado_neto_total);
@@ -88,11 +172,12 @@ import { processCommercialExcels } from "./core/index.js";
       if (isNaN(cump) && !isNaN(factEsp) && factEsp !== 0 && !isNaN(factReal)) cump = factReal / factEsp;
       var margenPct = toRatio(c.margen_sobre_ventas != null ? c.margen_sobre_ventas : c.margen_sobre_ventas_periodo_activo);
       if (isNaN(margenPct) && !isNaN(valorFact) && valorFact !== 0 && !isNaN(margenBruto)) margenPct = margenBruto / valorFact;
+      var territory = resolveDashboardTerritoryForCustomer(c, territoryByCustomerCode);
       return {
         key: String(c.customer_code || ''),
         codigo: String(c.customer_code || '-'),
         cliente: c.customer_display_name || c.customer_name || c.names_raw_joined || String(c.customer_code || '-'),
-        vendedor: c.territory || '-',
+        territory: territory,
         publico: '-',
         licitacion: '-',
         contratos: metricOrZero(c.contratos_total != null ? c.contratos_total : c.contratos_total_historicos),
@@ -109,6 +194,7 @@ import { processCommercialExcels } from "./core/index.js";
         aparece_en_contratos: !!c.aparece_en_contratos
       };
     });
+    logTerritoryDashboardDebug(territorySalesSrc, territoryByCustomerCode, rows);
     return {
       rows: rows,
       validationSummary: buildValidationSummary(analysisData),
@@ -320,7 +406,8 @@ import { processCommercialExcels } from "./core/index.js";
   }
 
   var COL = { ideal: '#22c55e', opp: '#f59e0b', prices: '#3b82f6', urgent: '#ef4444', none: '#6b7280' };
-  var VENDOR_COLS = ['#0ea5e9', '#8b5cf6', '#f97316', '#10b981', '#ec4899', '#6366f1', '#14b8a6', '#eab308', '#64748b', '#a855f7', '#d946ef', '#0d9488'];
+  /** Paleta para coloración discreta por territorio (select «Territorio» en mapa). */
+  var TERRITORY_DISCRETE_COLORS = ['#0ea5e9', '#8b5cf6', '#f97316', '#10b981', '#ec4899', '#6366f1', '#14b8a6', '#eab308', '#64748b', '#a855f7', '#d946ef', '#0d9488'];
 
   function strHash(s) {
     var h = 0; var u = String(s == null ? '' : s);
@@ -342,7 +429,9 @@ import { processCommercialExcels } from "./core/index.js";
 
   function colorForMapRow(r, colorBy) {
     if (colorBy === 'quadrant') return COL[r.categoriaCode] || COL.none;
-    if (colorBy === 'vendedor') return VENDOR_COLS[strHash(r.vendedor || '—') % VENDOR_COLS.length];
+    if (colorBy === MAP_COLOR_BY_TERRITORY_SELECT_VALUE) {
+      return TERRITORY_DISCRETE_COLORS[strHash(r.territory || SIN_TERRITORIO) % TERRITORY_DISCRETE_COLORS.length];
+    }
     if (colorBy === 'publico') {
       if (r.publico === 'Público') return '#0284c7';
       if (r.publico === 'Privado') return '#64748b';
@@ -356,10 +445,11 @@ import { processCommercialExcels } from "./core/index.js";
     return COL[r.categoriaCode] || '#64748b';
   }
 
-  function passMapSetFilters(r) {
-    if (mapState.vend) {
-      var v = (r.vendedor || '—');
-      if (!mapState.vend.has(v)) return { ok: false, reason: 'territorio' };
+  /** Filtros por chips del mapa estratégico (territorio, público/privado, licitación). */
+  function passStrategicMapChipFilters(r) {
+    if (mapState.territory) {
+      var terr = (r.territory != null && String(r.territory) !== '') ? String(r.territory) : SIN_TERRITORIO;
+      if (!mapState.territory.has(terr)) return { ok: false, reason: 'territorio' };
     }
     if (mapState.pub) {
       var p = (r.publico || '—');
@@ -396,7 +486,7 @@ import { processCommercialExcels } from "./core/index.js";
     var discarded = [];
     var quality = { xMissing: 0, yMissing: 0, bothMissing: 0, plotted: 0, evaluated: 0 };
     var out = [];
-    var afterVend = 0, withXY = 0;
+    var afterChipFilters = 0, withXY = 0;
     var q = (document.getElementById('map-search') && document.getElementById('map-search').value || '').trim().toLowerCase();
     var minCRaw = document.getElementById('map-min-contratos') ? parseInt(document.getElementById('map-min-contratos').value, 10) : 0;
     var minC = (isNaN(minCRaw) ? 0 : minCRaw);
@@ -411,12 +501,12 @@ import { processCommercialExcels } from "./core/index.js";
     for (var j = 0; j < nCross; j++) {
       var r2 = allRows[j];
       quality.evaluated += 1;
-      var prf = passMapSetFilters(r2);
+      var prf = passStrategicMapChipFilters(r2);
       if (!prf.ok) {
         discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'filtro: ' + prf.reason });
         continue;
       }
-      afterVend++;
+      afterChipFilters++;
       if (q) {
         var blob = (String(r2.cliente || '') + ' ' + String(r2.codigo || '')).toLowerCase();
         if (blob.indexOf(q) < 0) { discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'búsqueda' }); continue; }
@@ -456,12 +546,12 @@ import { processCommercialExcels } from "./core/index.js";
       });
       quality.plotted += 1;
     }
-    return { nCross: nCross, afterVend: afterVend, withXY: withXY, out: out, discarded: discarded, colorBy: colorBy, sizeBy: sizeBy, xLog: xLog, minCumpP: minCumpP, minC: minC, q: q, quality: quality };
+    return { nCross: nCross, afterChipFilters: afterChipFilters, withXY: withXY, out: out, discarded: discarded, colorBy: colorBy, sizeBy: sizeBy, xLog: xLog, minCumpP: minCumpP, minC: minC, q: q, quality: quality };
   }
 
   function debugChartData(g, allRows) {
     console.log('[Mapa 5] Registros cruzados (total filas):', g.nCross);
-    console.log('[Mapa 5] Tras chips territorio / público / licitación:', g.afterVend);
+    console.log('[Mapa 5] Tras chips territorio / público / licitación:', g.afterChipFilters);
     console.log('[Mapa 5] Con cumpl. y margen % válidos (tras búsq./N° ctes., antes corte cumpl. mín.):', g.withXY);
     console.log('[Mapa 5] Puntos finales a Plotly (tras cumpl. mín. y eje log):', g.out.length);
     var sample = g.out.slice(0, 5).map(function (o) { return { cliente: o.row.cliente, x: o.x, y: o.y, cump: o.row.cump, marg: o.row.margen_pct }; });
@@ -477,7 +567,7 @@ import { processCommercialExcels } from "./core/index.js";
   function buildMapPointHover(o) {
     var r = o.row;
     return [
-      (r.cliente || '—'), 'Cód: ' + (r.codigo || '—'), 'Territorio: ' + (r.vendedor || '—'),
+      (r.cliente || '—'), 'Cód: ' + (r.codigo || '—'), 'Territorio: ' + (r.territory || '—'),
       'Publ./priv.: ' + (r.publico || '—'), 'Licit.: ' + (r.licitacion || '—'),
       'Cumpl. %: ' + o.x.toFixed(1), 'Margen %: ' + o.y.toFixed(1),
       'Origen eje X: ' + (o.xSource || '—'), 'Origen eje Y: ' + (o.ySource || '—'),
@@ -677,7 +767,7 @@ import { processCommercialExcels } from "./core/index.js";
         return '<tr><td data-text>' + s.label + '</td><td>' + s.n + '</td><td>' + fmtMoney(s.te) + '</td><td>' + fmtMoney(s.tr) + '</td><td>' + fmtPct(cP) + '</td><td>' + fmtMoney(s.tmb) + '</td><td>' + fmtPct(mP) + '</td></tr>';
       }).join('');
     }
-    one('table-seg-vendedor', groupSegment(rows, function (r) { return r.vendedor || '—'; }));
+    one('table-seg-vendedor', groupSegment(rows, function (r) { return r.territory || SIN_TERRITORIO; }));
     one('table-seg-publico', groupSegment(rows, function (r) { return r.publico || '—'; }));
     one('table-seg-licit', groupSegment(rows, function (r) { return r.licitacion || '—'; }));
   }
@@ -687,27 +777,9 @@ import { processCommercialExcels } from "./core/index.js";
     return Object.keys(s).sort();
   }
 
-  function topVendorVals(rows, limit) {
-    var n = limit || 3;
-    var cnt = {};
-    for (var i = 0; i < rows.length; i++) {
-      var v = String(rows[i].vendedor || '—').trim();
-      if (!v) v = '—';
-      cnt[v] = (cnt[v] || 0) + 1;
-    }
-    var names = Object.keys(cnt).filter(function (v2) { return v2 !== '—'; });
-    names.sort(function (a, b) {
-      var d = (cnt[b] || 0) - (cnt[a] || 0);
-      if (d !== 0) return d;
-      return a.localeCompare(b, 'es', { sensitivity: 'base' });
-    });
-    if (!names.length) return [];
-    return names.slice(0, n);
-  }
-
   function populateFilters(rows) {
     var opts = function (elId, allLabel, values) { var s = document.getElementById(elId); s.innerHTML = '<option value="">' + allLabel + '</option>'; values.forEach(function (v) { var o = document.createElement('option'); o.value = v; o.textContent = v; s.appendChild(o); }); };
-    opts('filter-vendedor', 'Todos', distinctVals(rows, function (r) { return r.vendedor || '—'; }));
+    opts('filter-vendedor', 'Todos', distinctVals(rows, function (r) { return r.territory || SIN_TERRITORIO; }));
     opts('filter-publico', 'Todos', distinctVals(rows, function (r) { return r.publico || '—'; }));
     opts('filter-licit', 'Todos', distinctVals(rows, function (r) { return r.licitacion || '—'; }));
     opts('filter-cat', 'Todas', ['Ideal', 'Oportunidad', 'Revisar precios', 'Acción urgente', 'Sin dato'].filter(function (c) { return rows.some(function (r) { return (r.categoria || '') === c; }); })
@@ -716,7 +788,7 @@ import { processCommercialExcels } from "./core/index.js";
 
   function filterMain(rows) {
     var q = (document.getElementById('table-search') && document.getElementById('table-search').value || '').toLowerCase();
-    var fv = document.getElementById('filter-vendedor').value;
+    var filterTerritory = document.getElementById('filter-vendedor').value;
     var fp = document.getElementById('filter-publico').value;
     var fl = document.getElementById('filter-licit').value;
     var fc = document.getElementById('filter-cat').value;
@@ -724,7 +796,7 @@ import { processCommercialExcels } from "./core/index.js";
     var tC2 = state.cumpThresh;
     return rows.filter(function (r) {
       if (q && (String(r.cliente) + ' ' + String(r.codigo)).toLowerCase().indexOf(q) < 0) return false;
-      if (fv && (r.vendedor || '—') !== fv) return false;
+      if (filterTerritory && (r.territory || SIN_TERRITORIO) !== filterTerritory) return false;
       if (fp && (r.publico || '—') !== fp) return false;
       if (fl && (r.licitacion || '—') !== fl) return false;
       if (fc && (r.categoria || '') !== fc) return false;
@@ -735,7 +807,7 @@ import { processCommercialExcels } from "./core/index.js";
   }
 
   var MAIN_COLS = [
-    { k: 'codigo', t: 'Código' }, { k: 'cliente', t: 'Cliente' }, { k: 'vendedor', t: 'Territorio' },
+    { k: 'codigo', t: 'Código' }, { k: 'cliente', t: 'Cliente' }, { k: 'territory', t: 'Territorio' },
     { k: 'publico', t: 'Publ./priv.' }, { k: 'licitacion', t: 'Licit.' }, { k: 'contratos', t: 'N° ctes.' },
     { k: 'fact_esp', t: 'Fact. esp.' }, { k: 'fact_real', t: 'Fact. real' },
     { k: 'cump', t: 'Cump. %' }, { k: 'valor_fact', t: 'Val. fact. MB' }, { k: 'margen_bruto', t: 'M. bruto' },
@@ -751,7 +823,7 @@ import { processCommercialExcels } from "./core/index.js";
   }
 
   function isTextCol(c) {
-    return c === 'cliente' || c === 'codigo' || c === 'vendedor' || c === 'publico' || c === 'licitacion' || c === 'categoria';
+    return c === 'cliente' || c === 'codigo' || c === 'territory' || c === 'publico' || c === 'licitacion' || c === 'categoria';
   }
 
   function renderMainTable() {
@@ -798,7 +870,7 @@ import { processCommercialExcels } from "./core/index.js";
 
   function runFullRender() {
     if (state.rows) {
-      buildVendChipsFromRows(state.rows);
+      buildMapTerritoryChipsFromRows(state.rows);
       resetMapFilters();
       configureMapSlidersFromRows(state.rows);
       updateMapChipCounts(state.rows);
@@ -831,7 +903,9 @@ import { processCommercialExcels } from "./core/index.js";
   }
 
   function resetMapFilters() {
-    mapState = { vend: null, pub: null, lic: null };
+    mapState.territory = null;
+    mapState.pub = null;
+    mapState.lic = null;
     var ms = document.getElementById('map-search'); if (ms) ms.value = '';
     var mc = document.getElementById('map-min-contratos'); if (mc) { mc.value = '0'; if (mc.type === 'range' && +mc.value > +mc.max) mc.value = mc.max; }
     var mcu = document.getElementById('map-min-cump'); if (mcu) mcu.value = '0';
@@ -853,11 +927,11 @@ import { processCommercialExcels } from "./core/index.js";
 
   function updateMapChipCounts(rows) {
     if (!rows) return;
-    var cv = countBy(rows, function (r) { return r.vendedor || '—'; });
+    var cv = countBy(rows, function (r) { return r.territory || SIN_TERRITORIO; });
     var cpub = countBy(rows, function (r) { return r.publico || '—'; });
     var clic = countBy(rows, function (r) { return r.licitacion || '—'; });
-    document.querySelectorAll('#map-chips-vend [data-cnt-v]').forEach(function (el) {
-      var k = el.getAttribute('data-cnt-v');
+    document.querySelectorAll('#map-chips-vend [data-cnt-territory]').forEach(function (el) {
+      var k = el.getAttribute('data-cnt-territory');
       el.textContent = '(' + (cv[k] || 0) + ')';
     });
     var aPub = cpub['Público'] || 0, aPrv = cpub['Privado'] || 0;
@@ -872,43 +946,59 @@ import { processCommercialExcels } from "./core/index.js";
     if (elN) elN.textContent = '(' + aNo + ')';
   }
 
-  function buildVendChipsFromRows(rows) {
+  function buildMapTerritoryChipsFromRows(rows) {
     var wrap = document.getElementById('map-chips-vend');
     if (!wrap) return;
-    var d = topVendorVals(rows, 3);
     wrap.textContent = '';
-    if (!d.length) {
+    if (!rows || !rows.length) {
+      var bEmpty = document.createElement('button');
+      bEmpty.type = 'button';
+      bEmpty.className = 'map-chip';
+      bEmpty.disabled = true;
+      bEmpty.textContent = 'Sin clientes';
+      wrap.appendChild(bEmpty);
+      return;
+    }
+    var cv = countBy(rows, function (r) { return r.territory || SIN_TERRITORIO; });
+    var realTerr = Object.keys(cv).filter(function (k) { return k !== SIN_TERRITORIO; });
+    realTerr.sort(function (a, b) {
+      var d = (cv[b] || 0) - (cv[a] || 0);
+      if (d !== 0) return d;
+      return a.localeCompare(b, 'es', { sensitivity: 'base' });
+    });
+    function appendChip(label) {
+      var vs = String(label);
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'map-chip';
+      b.setAttribute('data-territory', vs);
+      b.setAttribute('aria-pressed', 'false');
+      b.appendChild(document.createTextNode(vs + ' '));
+      var sp = document.createElement('span');
+      sp.className = 'chip-cnt';
+      sp.setAttribute('data-cnt-territory', vs);
+      sp.textContent = '(0)';
+      b.appendChild(sp);
+      wrap.appendChild(b);
+    }
+    for (var i = 0; i < realTerr.length; i++) appendChip(realTerr[i]);
+    if ((cv[SIN_TERRITORIO] || 0) > 0) appendChip(SIN_TERRITORIO);
+    if (!realTerr.length && !(cv[SIN_TERRITORIO] > 0)) {
       var b0 = document.createElement('button');
       b0.type = 'button';
       b0.className = 'map-chip';
       b0.disabled = true;
       b0.textContent = 'Sin dato de territorio';
       wrap.appendChild(b0);
-      return;
-    }
-    for (var i = 0; i < d.length; i++) {
-      var v = d[i], vs = String(v);
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'map-chip';
-      b.setAttribute('data-vend', vs);
-      b.setAttribute('aria-pressed', 'false');
-      b.appendChild(document.createTextNode(vs + ' '));
-      var sp = document.createElement('span');
-      sp.className = 'chip-cnt';
-      sp.setAttribute('data-cnt-v', vs);
-      sp.textContent = '(0)';
-      b.appendChild(sp);
-      wrap.appendChild(b);
     }
   }
 
   function syncMapChipUI() {
     var tv = document.getElementById('map-vend-todos');
-    if (tv) { tv.classList.toggle('is-active', !mapState.vend); }
-    document.querySelectorAll('#map-chips-vend [data-vend]').forEach(function (b) {
-      var v = b.getAttribute('data-vend');
-      var on = mapState.vend && mapState.vend.has(v);
+    if (tv) { tv.classList.toggle('is-active', !mapState.territory); }
+    document.querySelectorAll('#map-chips-vend [data-territory]').forEach(function (b) {
+      var v = b.getAttribute('data-territory');
+      var on = mapState.territory && mapState.territory.has(v);
       b.classList.toggle('is-active', !!on);
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
@@ -939,7 +1029,7 @@ import { processCommercialExcels } from "./core/index.js";
     var h = 'Cliente;Código;Cumpl %;Margen %;Territorio;Público/priv.;Licitación;Fact. esp.;Fact. real;Val. fact. MB;M. bruto;Potencial;Categoría\n';
     var b = h + g.out.map(function (o) {
       var r = o.row;
-      return [r.cliente, r.codigo, o.x.toFixed(1), o.y.toFixed(1), r.vendedor, r.publico, r.licitacion,
+      return [r.cliente, r.codigo, o.x.toFixed(1), o.y.toFixed(1), r.territory, r.publico, r.licitacion,
         isNaN(r.fact_esp) ? '' : r.fact_esp, isNaN(r.fact_real) ? '' : r.fact_real, isNaN(r.valor_fact) ? '' : r.valor_fact,
         isNaN(r.margen_bruto) ? '' : r.margen_bruto, isNaN(r.pot) ? '' : r.pot, r.categoria
       ].map(function (c) { return (c == null ? '' : String(c).replace(/[;\n\r]/g, ' ')); }).join(';');
@@ -1024,12 +1114,12 @@ import { processCommercialExcels } from "./core/index.js";
     };
   }
 
-  function handleMapVendClick(dv) {
-    if (dv === 'all') mapState.vend = null;
+  function handleMapTerritoryChipClick(territoryKey) {
+    if (territoryKey === 'all') mapState.territory = null;
     else {
-      if (!mapState.vend) mapState.vend = new Set();
-      if (mapState.vend.has(dv)) mapState.vend.delete(dv); else mapState.vend.add(dv);
-      if (mapState.vend.size === 0) mapState.vend = null;
+      if (!mapState.territory) mapState.territory = new Set();
+      if (mapState.territory.has(territoryKey)) mapState.territory.delete(territoryKey); else mapState.territory.add(territoryKey);
+      if (mapState.territory.size === 0) mapState.territory = null;
     }
     syncMapChipUI();
     if (state.rows) updateMapChipCounts(state.rows);
@@ -1066,7 +1156,7 @@ import { processCommercialExcels } from "./core/index.js";
         if (t && t.classList && t.classList.contains('map-todos-link')) {
           ev.preventDefault();
           var w = t.getAttribute('data-todos');
-          if (w === 'vend') handleMapVendClick('all');
+          if (w === MAP_TERRITORY_TODOS_DOM) handleMapTerritoryChipClick('all');
           else if (w === 'pub') handleMapPubClick('all');
           else if (w === 'lic') handleMapLicClick('all');
           return;
@@ -1074,9 +1164,9 @@ import { processCommercialExcels } from "./core/index.js";
         if (!t || !t.closest) return;
         var chip = t.closest('.map-chip');
         if (!chip || !sec.contains(chip)) return;
-        if (chip.hasAttribute('data-vend')) {
+        if (chip.hasAttribute('data-territory')) {
           ev.preventDefault();
-          handleMapVendClick(chip.getAttribute('data-vend'));
+          handleMapTerritoryChipClick(chip.getAttribute('data-territory'));
           return;
         }
         if (chip.hasAttribute('data-pub')) {
