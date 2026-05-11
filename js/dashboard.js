@@ -1,483 +1,118 @@
 /**
  * Dashboard inteligencia comercial
- * - Lee Excel (SheetJS), visualiza (Plotly)
- * - Cumplimiento % = facturación real / facturación esperada
- * - Margen % = margen bruto / valor facturado
- * - Potencial = facturación esperada − facturación real
+ * Capa visual construida sobre el motor comercial reutilizable.
  */
+import { processCommercialExcels } from "./core/index.js";
+
 (function () {
   'use strict';
 
-  // --- constantes: sinónimos para mapeo heurístico (columna detectada por subcadena) ---
-  var CC_KEYS = {
-    codigo: ['codigo', 'código', 'id cliente', 'idcliente', 'cod cliente', 'code', 'n° cliente', 'nº cliente', 'cód', 'nro codigo'],
-    cliente: ['cliente', 'razon', 'razón' , 'customer', 'nombre', 'deudor', 'empresa', 'nombre cliente', 'razon social', 'ruc'],
-    vendedor: ['vendedor', 'vend', 'asesor', 'comercial', 'seller', 'ejecutiv', 'representant'],
-    publico: ['publico', 'privado', 'sector', 'público', 'tipo', 'gob', 'gobierno', 'público/priv', 'público/privado'],
-    licitacion: ['licit', 'concurso', 'lic tacion', 'remate'],
-    fact_esp: ['esperad', 'meta', 'objetiv', 'target', 'budget', 'proyectad', 'planead', 'presup', 'monto esper'],
-    fact_real: ['real', 'neta', 'neto', 'facturado', 'cobr', 'vend', 'monto real', 'fact. real', 'fact neta', 'reali'],
-    contratos: ['contrat', 'n contrat', 'num contrat', 'contracts', 'cte', 'no contrat', 'cant contrat', 'n° contrat']
-  };
-
-  var MB_KEYS = {
-    codigo: ['codigo', 'código', 'id cliente', 'idcliente', 'cod cliente', 'code', 'nro codigo', 'cód', 'cód.'],
-    cliente: ['cliente', 'razon', 'razón', 'customer', 'nombre', 'deudor', 'empresa', 'nombre cliente'],
-    vendedor: ['vendedor', 'vend', 'asesor', 'comercial', 'seller', 'ejecutiv', 'representant'],
-    /** fact. neto/venta neta: planillas frecuentes; si no, no matchea "valor facturado" en el encabezado. */
-    valor: ['valor factur', 'fact neto', 'fact. neto', 'ventas', 'facturación', 'facturacion', 'monto', 'importe', 'ingreso', 'revenue', 'billing', 'vta', 'vta neta', 'venta neta', 'importe neta'],
-    margen: ['margen bruto', 'm.b.', 'margen  bruto', 'gross', 'm bruto', 'm/b', 'margen'],
-    unidades: ['unidad', 'qty', 'cant', 'pzs', 'unidades', 'pzs.']
-  };
-
   var state = {
-    rawCC: null,
-    rawMB: null,
-    rawTerritory: null,
-    ccMeta: null,
-    mbMeta: null,
-    territoryMeta: null,
+    analysisData: null,
+    files: {
+      territorySalesFile: null,
+      marginsFile: null,
+      contractsFile: null
+    },
     rows: null,
     sortMain: { col: 'cliente', dir: 1 },
     cumpCut: 'median',
     margCut: 'median',
     cumpThresh: null,
-    margThresh: null
+    margThresh: null,
+    validationSummary: null
   };
 
-  /** Filtros solo sección 5. vend/pub/lic: null = mostrar todos; Set = OR dentro del tipo */
+  /** Filtros solo seccion 5. vend/pub/lic: null = mostrar todos; Set = OR dentro del tipo */
   var mapState = { vend: null, pub: null, lic: null, search: '', minC: 0, minCump: 0, colorBy: 'quadrant', sizeBy: 'contratos', xLog: false };
 
-  // --- normalización y números ---
-  function normKey(s) {
-    if (s == null || s === undefined) return '';
-    return String(s)
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9%/.]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+  function finiteNumber(value) {
+    if (value === null || value === undefined || value === '') return NaN;
+    var n = Number(value);
+    return Number.isFinite(n) ? n : NaN;
   }
 
-  function parseNumber(x) {
-    if (x == null || x === '' || (typeof x === 'object' && !(x instanceof Date))) return NaN;
-    if (typeof x === 'number' && !isNaN(x)) return x;
-    if (x instanceof Date) return x.getTime();
-    var s = String(x).trim();
-    s = s.replace(/[$€£\s\u00A0]/g, '');
-    if (s === '' || s === '-') return NaN;
-    var c = s.replace(/[.,]/g, function (d, i, st) { return d; });
-    if (c.indexOf(',') >= 0 && c.indexOf('.') >= 0) {
-      if (c.lastIndexOf(',') > c.lastIndexOf('.')) s = c.replace(/\./g, '').replace(',', '.');
-      else s = c.replace(/,/g, '');
-    } else if (s.indexOf(',') >= 0 && s.indexOf('.') < 0) {
-      var p = s.split(',');
-      if (p.length === 2 && p[1].length <= 2) s = p[0].replace(/[^\d-]/g, '') + '.' + p[1];
-      else s = s.replace(/,/g, '');
-    } else s = s.replace(/,/g, '');
-    return parseFloat(s);
+  function metricOrZero(value) {
+    var n = finiteNumber(value);
+    return isNaN(n) ? 0 : n;
   }
 
-  /**
-   * Convierte cumpl. / margen a cifra 0-100+ para el eje (ratio 0.56 -> 56; "56%" -> 56).
-   * null/undefined/NaN -> null
-   */
+  /** Convierte porcentajes del motor a ratio 0-1 para las rutinas visuales existentes. */
+  function toRatio(value) {
+    var n = finiteNumber(value);
+    if (isNaN(n)) return NaN;
+    return Math.abs(n) > 1.5 ? n / 100 : n;
+  }
+
+  /** Convierte cumpl. / margen a cifra 0-100+ para el eje. */
   function toPercentValue(value) {
-    if (value === null || value === undefined) return null;
-    if (typeof value === 'number' && (isNaN(value) || value !== value)) return null;
-    if (typeof value === 'string') {
-      var t = value.trim();
-      if (t === '' || t === '—' || t === '-') return null;
-      t = t.replace(/%/g, ' ').replace(/,/g, '.').replace(/\s+/g, '');
-      if (t === '') return null;
-    }
-    var n = (typeof value === 'string') ? parseNumber(value) : value;
-    if (typeof n !== 'number' || isNaN(n) || n !== n) return null;
-    if (n >= 0 && n <= 1) return n * 100;
+    var n = finiteNumber(value);
+    if (isNaN(n)) return null;
+    if (n >= -1.5 && n <= 1.5) return n * 100;
     return n;
   }
 
-  function scoreHeader(headerNorm, keywords) {
-    if (!headerNorm) return 0;
-    var t = 0;
-    for (var i = 0; i < keywords.length; i++) {
-      var w = normKey(keywords[i]);
-      if (headerNorm === w) t += 5;
-      else if (headerNorm.indexOf(w) >= 0 && w.length > 1) t += 3;
-      else if (w.length > 3 && w.indexOf(headerNorm) >= 0) t += 1;
+  async function loadCommercialData(ref) {
+    var territorySalesFile = ref.territorySalesFile;
+    var marginsFile = ref.marginsFile;
+    var contractsFile = ref.contractsFile;
+    if (typeof XLSX === 'undefined') {
+      throw new Error('SheetJS no se cargo. Comprueba la conexion a internet antes de procesar.');
     }
-    return t;
-  }
-
-  function findBestIndex(headers, keywords, avoidFn) {
-    var bestI = -1;
-    var bestS = 0.5;
-    for (var c = 0; c < headers.length; c++) {
-      if (avoidFn && avoidFn(c)) continue;
-      var sc = scoreHeader(headers[c], keywords);
-      if (sc > bestS) { bestS = sc; bestI = c; }
-    }
-    return { index: bestI, score: bestS };
-  }
-
-  function mapColumnsCC(headers) {
-    var h = headers.map(function (x) { return normKey(x == null ? '' : String(x)); });
-    var m = {};
-    for (var k in CC_KEYS) {
-      if (!CC_KEYS.hasOwnProperty(k)) continue;
-      var r = findBestIndex(h, CC_KEYS[k], null);
-      m[k] = r.index;
-      // Campos opcionales: evita enganchar columnas incorrectas por parecido débil.
-      if ((k === 'vendedor' || k === 'publico' || k === 'licitacion') && r.score < 3) m[k] = -1;
-    }
-    if (m.fact_esp === m.fact_real && m.fact_esp >= 0) m.fact_real = -1;
-    return { map: m, h: h, headers: headers };
-  }
-
-  function mapColumnsMB(headers) {
-    var h = headers.map(function (x) { return normKey(x == null ? '' : String(x)); });
-    var m = {};
-    for (var k2 in MB_KEYS) {
-      if (!MB_KEYS.hasOwnProperty(k2)) continue;
-      var r2 = findBestIndex(h, MB_KEYS[k2], null);
-      m[k2] = r2.index;
-      if (k2 === 'vendedor' && r2.score < 3) m[k2] = -1;
-    }
-    return { map: m, h: h, headers: headers };
-  }
-
-  function readSheetToMatrix(file, cb) {
-    var fr = new FileReader();
-    fr.onload = function (e) {
-      var data = new Uint8Array(e.target.result);
-      var wb = XLSX.read(data, { type: 'array' });
-      var sn = wb.SheetNames[0];
-      var ws = wb.Sheets[sn];
-      var matrix = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
-      cb(null, { sheetName: sn, matrix: matrix });
-    };
-    fr.onerror = function () { cb(new Error('No se pudo leer el archivo')); };
-    fr.readAsArrayBuffer(file);
-  }
-
-  function readWorkbookToSheets(file, cb) {
-    var fr = new FileReader();
-    fr.onload = function (e) {
-      var data = new Uint8Array(e.target.result);
-      var wb = XLSX.read(data, { type: 'array' });
-      var out = [];
-      for (var i = 0; i < wb.SheetNames.length; i++) {
-        var sn = wb.SheetNames[i];
-        var ws = wb.Sheets[sn];
-        var matrix = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
-        out.push({ sheetName: sn, matrix: matrix });
-      }
-      cb(null, { sheets: out, sheetNames: wb.SheetNames.slice() });
-    };
-    fr.onerror = function () { cb(new Error('No se pudo leer el archivo')); };
-    fr.readAsArrayBuffer(file);
-  }
-
-  function matrixToObjects(matrix) {
-    if (!matrix || !matrix.length) return { headers: [], rows: [] };
-    var headers = matrix[0].map(function (c) { return c == null ? '' : String(c).trim(); });
-    var rows = [];
-    for (var r = 1; r < matrix.length; r++) {
-      var line = matrix[r];
-      if (!line || !line.length) continue;
-      var o = [];
-      for (var c2 = 0; c2 < Math.max(line.length, headers.length); c2++) o.push(line[c2] !== undefined ? line[c2] : '');
-      if (o.every(function (c3) { return c3 === '' || c3 == null; })) continue;
-      rows.push(o);
-    }
-    return { headers: headers, rows: rows };
-  }
-
-  /** Código de cliente (SAP, etc.): puro numérico → misma clave aunque venga en col. "Cliente" en un archivo y "Código" en otro. */
-  function looksLikeClientId(s) {
-    if (s == null) return false;
-    var t = String(s).trim();
-    if (t.length < 5) return false;
-    return /^\d+$/.test(t);
-  }
-
-  function clientKey(row, map, headers) {
-    var ci = map.codigo;
-    var cj = map.cliente;
-    var code = (ci >= 0 && row[ci] != null) ? String(row[ci]).trim() : '';
-    if (code) return 'C:' + normKey(code);
-    var name = (cj >= 0 && row[cj] != null) ? String(row[cj]).trim() : '';
-    if (looksLikeClientId(name)) return 'C:' + normKey(name);
-    return 'N:' + normKey(name);
-  }
-
-  function toBoolLicit(s) {
-    if (s == null || s === '') return '—';
-    var t = String(s).toLowerCase();
-    if (t === '1' || t === 's' || t === 'si' || t === 'sí' || t === 'y' || t === 'true' || t === 'x') return 'Sí';
-    if (t === '0' || t === 'n' || t === 'no' || t === 'false' || t === '—' || t === '-') return 'No';
-    if (t.indexOf('sí') >= 0 || t.indexOf('si') >= 0 || t.indexOf('licit') >= 0) return 'Sí';
-    if (t.indexOf('no') >= 0) return 'No';
-    return s;
-  }
-
-  function toPublico(s) {
-    if (s == null || s === '') return '—';
-    var t = normKey(String(s));
-    if (t.indexOf('publico') >= 0 || t.indexOf('gobierno') >= 0) return 'Público';
-    if (t.indexOf('priv') >= 0) return 'Privado';
-    return String(s);
-  }
-
-  function cleanVendorName(s) {
-    if (s == null) return '—';
-    var t = String(s).replace(/\s+/g, ' ').trim();
-    if (!t || t === '-' || t === '—') return '—';
-    return t.toUpperCase();
-  }
-
-  function parseTerritoryName(raw) {
-    if (raw == null) return '';
-    var t = String(raw).replace(/\s+/g, ' ').trim();
-    if (!t) return '';
-    t = t.replace(/^\d+\s*/g, '').replace(/^["'\-–—\s]+/, '');
-    var p = t.split(/\s{2,}/)[0];
-    if (p) t = p;
-    return t.trim();
-  }
-
-  function parseClientCodeFromRepClient(raw) {
-    if (raw == null) return '';
-    var t = String(raw).trim();
-    var m = t.match(/^(\d{6,})\b/);
-    return m ? m[1] : '';
-  }
-
-  function parseTerritoryWorkbook(rawTerritory) {
-    var byCode = {};
-    if (!rawTerritory || !rawTerritory.sheets || !rawTerritory.sheets.length) return byCode;
-    for (var s = 0; s < rawTerritory.sheets.length; s++) {
-      var matrix = rawTerritory.sheets[s].matrix || [];
-      if (!matrix.length) continue;
-      var hRow = -1, colTerr = -1, colRepCli = -1;
-      for (var r = 0; r < Math.min(matrix.length, 20); r++) {
-        var row = matrix[r] || [];
-        for (var c = 0; c < row.length; c++) {
-          var n = normKey(row[c] == null ? '' : String(row[c]));
-          if (n.indexOf('territorio') >= 0 || n.indexOf('region') >= 0) { hRow = r; colTerr = c; }
-          if (n.indexOf('representante') >= 0 || n.indexOf('representante cliente') >= 0 || n.indexOf('cliente') >= 0) { hRow = r; colRepCli = c; }
-        }
-      }
-      if (hRow < 0 || colRepCli < 0) continue;
-      var currentVend = '';
-      var currentTerr = '';
-      for (var rr = hRow + 1; rr < matrix.length; rr++) {
-        var line = matrix[rr] || [];
-        var terrRaw = colTerr >= 0 ? line[colTerr] : '';
-        var repCliRaw = line[colRepCli];
-        var repCli = repCliRaw == null ? '' : String(repCliRaw).trim();
-        var terrTxt = terrRaw == null ? '' : String(terrRaw).trim();
-        if (!repCli && !terrTxt) continue;
-        if (terrTxt) {
-          var terrN = parseTerritoryName(terrTxt);
-          if (terrN) currentTerr = terrN;
-        }
-        var code = parseClientCodeFromRepClient(repCli);
-        if (!code) {
-          var maybeVend = cleanVendorName(repCli);
-          if (maybeVend && maybeVend !== '—') currentVend = maybeVend;
-          continue;
-        }
-        if (!currentVend) continue;
-        byCode[normKey(code)] = { vendedor: currentVend, territorio: currentTerr || '—' };
-      }
-    }
-    return byCode;
-  }
-
-  function applyTerritoryData(rows, terrMap) {
-    if (!rows || !rows.length || !terrMap) return;
-    for (var i = 0; i < rows.length; i++) {
-      var r = rows[i];
-      var c = (r.codigo && r.codigo !== '—') ? normKey(r.codigo) : '';
-      if (!c) continue;
-      var hit = terrMap[c];
-      if (!hit) continue;
-      if (hit.vendedor) r.vendedor = hit.vendedor;
-      if (hit.territorio) r.territorio = hit.territorio;
-    }
-  }
-
-  function aggregateCC(rows, map) {
-    var g = {};
-    for (var i = 0; i < rows.length; i++) {
-      var line = rows[i];
-      var k = clientKey(line, map, null);
-      if (k === 'N:') continue;
-      if (!g[k]) {
-        g[k] = { key: k, codigo: map.codigo >= 0 ? String(line[map.codigo] || '') : '', cliente: map.cliente >= 0 ? String(line[map.cliente] || '') : '' };
-        if (!g[k].codigo && map.codigo < 0) g[k].codigo = '—';
-        g[k].vendedor = map.vendedor >= 0 ? String(line[map.vendedor] || '—') : '—';
-        g[k].publico = map.publico >= 0 ? toPublico(line[map.publico]) : '—';
-        g[k].licitacion = map.licitacion >= 0 ? toBoolLicit(line[map.licitacion]) : '—';
-        g[k].fact_esp = 0;
-        g[k].fact_real = 0;
-        g[k].contratos = 0;
-        g[k]._n = 0;
-      } else {
-        g[k].vendedor = g[k].vendedor || (map.vendedor >= 0 ? String(line[map.vendedor] || '—') : g[k].vendedor);
-      }
-      var fesp = map.fact_esp >= 0 ? parseNumber(line[map.fact_esp]) : 0;
-      var frea = map.fact_real >= 0 ? parseNumber(line[map.fact_real]) : 0;
-      g[k].fact_esp += isNaN(fesp) ? 0 : fesp;
-      g[k].fact_real += isNaN(frea) ? 0 : frea;
-      // "N° contrat" casi siempre es identificador (miles de millones al sumar); "cant" es cantidad pequeña
-      var cadd = 1;
-      if (map.contratos >= 0) {
-        var cn = parseNumber(line[map.contratos]);
-        if (isNaN(cn) || cn <= 0) cadd = 1;
-        else if (cn > 1e4) cadd = 1;
-        else cadd = Math.max(1, Math.round(cn));
-      }
-      g[k].contratos += cadd;
-      g[k]._n += 1;
-    }
-    var out = [];
-    for (var key in g) { if (g.hasOwnProperty(key)) out.push(g[key]); }
-    return out;
-  }
-
-  function aggregateMB(rows, map) {
-    var g2 = {};
-    for (var i = 0; i < rows.length; i++) {
-      var line2 = rows[i];
-      var k2 = clientKey(line2, map, null);
-      if (k2 === 'N:') continue;
-      if (!g2[k2]) {
-        g2[k2] = {
-          key: k2,
-          codigo: map.codigo >= 0 ? String(line2[map.codigo] || '') : '',
-          cliente: map.cliente >= 0 ? String(line2[map.cliente] || '') : '',
-          vendedor: map.vendedor >= 0 ? String(line2[map.vendedor] || '—') : '—',
-          valor: 0,
-          margen: 0,
-          unidades: 0
-        };
-      }
-      var v = map.valor >= 0 ? parseNumber(line2[map.valor]) : 0;
-      var m2 = map.margen >= 0 ? parseNumber(line2[map.margen]) : 0;
-      var u = map.unidades >= 0 ? parseNumber(line2[map.unidades]) : 0;
-      g2[k2].valor += isNaN(v) ? 0 : v;
-      g2[k2].margen += isNaN(m2) ? 0 : m2;
-      g2[k2].unidades += isNaN(u) ? 0 : u;
-    }
-    var out2 = [];
-    for (var k3 in g2) { if (g2.hasOwnProperty(k3)) out2.push(g2[k3]); }
-    return out2;
-  }
-
-  function mergeData(cc, mb) {
-    // Une CC y MB por clave de cliente; si falta uno de los lados, crea un registro "vacío"
-    // para conservar la cartera completa en análisis y tablas.
-    var m = {};
-    for (var i = 0; i < cc.length; i++) { m[cc[i].key] = { cc: cc[i] }; }
-    for (var j = 0; j < mb.length; j++) {
-      var b = mb[j];
-      if (!m[b.key]) m[b.key] = {};
-      m[b.key].mb = b;
-    }
-    for (var k4 in m) {
-      if (!m[k4].cc) {
-        var b2 = m[k4].mb;
-        m[k4].cc = { key: k4, codigo: b2.codigo || '—', cliente: b2.cliente || '—', vendedor: b2.vendedor, publico: '—', licitacion: '—', fact_esp: 0, fact_real: 0, contratos: 0, _n: 0, _soloMB: true };
-      }
-      if (!m[k4].mb) {
-        var a = m[k4].cc;
-        m[k4].mb = { key: k4, codigo: a.codigo, cliente: a.cliente, vendedor: a.vendedor, valor: 0, margen: 0, unidades: 0, _soloCC: true };
-      }
-    }
-    var final = [];
-    for (var k5 in m) { if (m.hasOwnProperty(k5)) { var rec = m[k5]; var row = buildJoinedRow(rec.cc, rec.mb); if (row) final.push(row); } }
-    normalizeVendorNames(final);
-    return final;
-  }
-
-  function normalizeVendorNames(rows) {
-    if (!rows || !rows.length) return;
-    var byNorm = {};
-    for (var i = 0; i < rows.length; i++) {
-      var v = cleanVendorName(rows[i].vendedor);
-      var nk = normKey(v);
-      if (!nk) nk = '—';
-      if (!byNorm[nk]) byNorm[nk] = { total: 0, forms: {} };
-      byNorm[nk].total += 1;
-      byNorm[nk].forms[v] = (byNorm[nk].forms[v] || 0) + 1;
-    }
-    var canon = {};
-    Object.keys(byNorm).forEach(function (k) {
-      if (k === '—') { canon[k] = '—'; return; }
-      var forms = byNorm[k].forms;
-      var best = null, bestN = -1;
-      Object.keys(forms).forEach(function (f) {
-        var n = forms[f];
-        if (n > bestN) { bestN = n; best = f; return; }
-        if (n === bestN && best && f.length > best.length) best = f;
-      });
-      canon[k] = best || '—';
+    return processCommercialExcels({
+      territorySalesFile: territorySalesFile,
+      marginsFile: marginsFile,
+      contractsFile: contractsFile
     });
-    for (var j = 0; j < rows.length; j++) {
-      var v2 = cleanVendorName(rows[j].vendedor);
-      var nk2 = normKey(v2);
-      if (!nk2) nk2 = '—';
-      rows[j].vendedor = canon[nk2] || '—';
-    }
   }
 
-
-  function buildJoinedRow(cc, mb) {
-    // Métricas base del dashboard:
-    // - cump: avance de contrato (real/esperado)
-    // - margen_pct: rentabilidad (margen bruto/valor facturado)
-    var fe = +cc.fact_esp;
-    var fr = +cc.fact_real;
-    var vf = +mb.valor;
-    var mbr = +mb.margen;
-    var cump;
-    if (fe > 0) cump = fr / fe;
-    else cump = NaN;
-    var mPct;
-    if (vf > 0) mPct = mbr / vf;
-    else mPct = NaN;
-    var vendedor = '—';
-    if (cc.vendedor && cc.vendedor !== '—') vendedor = cleanVendorName(cc.vendedor);
-    else if (mb.vendedor && mb.vendedor !== '—') vendedor = cleanVendorName(mb.vendedor);
-    var dif = isNaN(fr) || isNaN(fe) ? NaN : (fr - fe);
-    var pot = isNaN(fe) || isNaN(fr) ? NaN : (fe - fr);
-    var ca = (cc.cliente && String(cc.cliente) !== '—') ? String(cc.cliente).trim() : '';
-    var cmb = (mb.cliente && String(mb.cliente) !== '—') ? String(mb.cliente).trim() : '';
-    var clienteOut = cmb;
-    if (ca) {
-      if (!cmb) clienteOut = ca;
-      else if (looksLikeClientId(ca) && !looksLikeClientId(cmb) && cmb.length > 2) clienteOut = cmb;
-      else clienteOut = ca;
-    } else if (!cmb) clienteOut = '—';
+  function buildValidationSummary(analysisData) {
+    var customers = analysisData && analysisData.customers ? analysisData.customers : [];
     return {
-      key: cc.key,
-      codigo: (cc.codigo && String(cc.codigo).trim() && cc.codigo !== '—') ? String(cc.codigo).trim() : (mb.codigo && String(mb.codigo).trim() ? String(mb.codigo).trim() : '—'),
-      cliente: String(clienteOut),
-      vendedor: vendedor,
-      publico: cc.publico,
-      licitacion: cc.licitacion,
-      contratos: +cc.contratos || 0,
-      fact_esp: fe,
-      fact_real: fr,
-      cump: cump,
-      valor_fact: vf,
-      margen_bruto: mbr,
-      margen_pct: mPct,
-      dif: dif,
-      pot: pot
+      customers: customers.length,
+      contracts: analysisData && analysisData.contracts ? analysisData.contracts.length : 0,
+      customersWithSales: customers.filter(function (c) { return !!c.aparece_en_ventas; }).length,
+      customersWithMargins: customers.filter(function (c) { return !!c.aparece_en_margenes; }).length,
+      customersWithContracts: customers.filter(function (c) { return !!c.aparece_en_contratos; }).length
+    };
+  }
+
+  function mapAnalysisDataToDashboardModel(analysisData) {
+    var customers = analysisData && Array.isArray(analysisData.customers) ? analysisData.customers : [];
+    var rows = customers.map(function (c) {
+      var factEsp = finiteNumber(c.facturacion_esperada_total);
+      var factReal = finiteNumber(c.facturado_neto_total);
+      var valorFact = finiteNumber(c.valor_facturado_total != null ? c.valor_facturado_total : c.valor_facturado_periodo_activo);
+      var margenBruto = finiteNumber(c.margen_bruto_total != null ? c.margen_bruto_total : c.margen_bruto_periodo_activo);
+      var cump = toRatio(c.cumplimiento_facturacion_promedio);
+      if (isNaN(cump) && !isNaN(factEsp) && factEsp !== 0 && !isNaN(factReal)) cump = factReal / factEsp;
+      var margenPct = toRatio(c.margen_sobre_ventas != null ? c.margen_sobre_ventas : c.margen_sobre_ventas_periodo_activo);
+      if (isNaN(margenPct) && !isNaN(valorFact) && valorFact !== 0 && !isNaN(margenBruto)) margenPct = margenBruto / valorFact;
+      return {
+        key: String(c.customer_code || ''),
+        codigo: String(c.customer_code || '-'),
+        cliente: c.customer_display_name || c.customer_name || c.names_raw_joined || String(c.customer_code || '-'),
+        vendedor: c.territory || '-',
+        publico: '-',
+        licitacion: '-',
+        contratos: metricOrZero(c.contratos_total != null ? c.contratos_total : c.contratos_total_historicos),
+        fact_esp: isNaN(factEsp) ? NaN : factEsp,
+        fact_real: isNaN(factReal) ? NaN : factReal,
+        cump: cump,
+        valor_fact: isNaN(valorFact) ? NaN : valorFact,
+        margen_bruto: isNaN(margenBruto) ? NaN : margenBruto,
+        margen_pct: margenPct,
+        dif: (!isNaN(factReal) && !isNaN(factEsp)) ? factReal - factEsp : NaN,
+        pot: (!isNaN(factReal) && !isNaN(factEsp)) ? factEsp - factReal : NaN,
+        aparece_en_ventas: !!c.aparece_en_ventas,
+        aparece_en_margenes: !!c.aparece_en_margenes,
+        aparece_en_contratos: !!c.aparece_en_contratos
+      };
+    });
+    return {
+      rows: rows,
+      validationSummary: buildValidationSummary(analysisData),
+      analysisData: analysisData
     };
   }
 
@@ -516,28 +151,6 @@
       rows[i].categoria = q.cat;
       rows[i].categoriaCode = q.code;
     }
-  }
-
-  // --- validación mínima ---
-  function validateCC(m) {
-    var e = [];
-    if (m.codigo < 0 && m.cliente < 0) e.push('Falta columna de cliente o código (Contract Compliance).');
-    if (m.fact_esp < 0) e.push('No se detectó facturación esperada o meta (Contract Compliance).');
-    if (m.fact_real < 0) e.push('No se detectó facturación real o neta (Contract Compliance).');
-    return e;
-  }
-  function validateMB(m) {
-    var e = [];
-    if (m.codigo < 0 && m.cliente < 0) e.push('Falta columna de cliente o código (MB).');
-    if (m.valor < 0) e.push('No se detectó valor facturado (MB).');
-    if (m.margen < 0) e.push('No se detectó margen bruto (MB).');
-    return e;
-  }
-
-  // --- registro de columnas en consola ---
-  function logDetection(label, map, headers) {
-    console.log('[' + label + '] columnas en archivo:', headers);
-    console.log('[' + label + '] mapeo detectado:', map);
   }
 
   // --- KPIs y resumen global ---
@@ -746,7 +359,7 @@
   function passMapSetFilters(r) {
     if (mapState.vend) {
       var v = (r.vendedor || '—');
-      if (!mapState.vend.has(v)) return { ok: false, reason: 'vendedor' };
+      if (!mapState.vend.has(v)) return { ok: false, reason: 'territorio' };
     }
     if (mapState.pub) {
       var p = (r.publico || '—');
@@ -848,7 +461,7 @@
 
   function debugChartData(g, allRows) {
     console.log('[Mapa 5] Registros cruzados (total filas):', g.nCross);
-    console.log('[Mapa 5] Tras chips vendedor / público / licitación:', g.afterVend);
+    console.log('[Mapa 5] Tras chips territorio / público / licitación:', g.afterVend);
     console.log('[Mapa 5] Con cumpl. y margen % válidos (tras búsq./N° ctes., antes corte cumpl. mín.):', g.withXY);
     console.log('[Mapa 5] Puntos finales a Plotly (tras cumpl. mín. y eje log):', g.out.length);
     var sample = g.out.slice(0, 5).map(function (o) { return { cliente: o.row.cliente, x: o.x, y: o.y, cump: o.row.cump, marg: o.row.margen_pct }; });
@@ -864,7 +477,7 @@
   function buildMapPointHover(o) {
     var r = o.row;
     return [
-      (r.cliente || '—'), 'Cód: ' + (r.codigo || '—'), 'Vend: ' + (r.vendedor || '—'),
+      (r.cliente || '—'), 'Cód: ' + (r.codigo || '—'), 'Territorio: ' + (r.vendedor || '—'),
       'Publ./priv.: ' + (r.publico || '—'), 'Licit.: ' + (r.licitacion || '—'),
       'Cumpl. %: ' + o.x.toFixed(1), 'Margen %: ' + o.y.toFixed(1),
       'Origen eje X: ' + (o.xSource || '—'), 'Origen eje Y: ' + (o.ySource || '—'),
@@ -1122,7 +735,7 @@
   }
 
   var MAIN_COLS = [
-    { k: 'codigo', t: 'Código' }, { k: 'cliente', t: 'Cliente' }, { k: 'vendedor', t: 'Vendedor' },
+    { k: 'codigo', t: 'Código' }, { k: 'cliente', t: 'Cliente' }, { k: 'vendedor', t: 'Territorio' },
     { k: 'publico', t: 'Publ./priv.' }, { k: 'licitacion', t: 'Licit.' }, { k: 'contratos', t: 'N° ctes.' },
     { k: 'fact_esp', t: 'Fact. esp.' }, { k: 'fact_real', t: 'Fact. real' },
     { k: 'cump', t: 'Cump. %' }, { k: 'valor_fact', t: 'Val. fact. MB' }, { k: 'margen_bruto', t: 'M. bruto' },
@@ -1269,7 +882,7 @@
       b0.type = 'button';
       b0.className = 'map-chip';
       b0.disabled = true;
-      b0.textContent = 'Sin dato de vendedor';
+      b0.textContent = 'Sin dato de territorio';
       wrap.appendChild(b0);
       return;
     }
@@ -1323,7 +936,7 @@
     if (!state.rows) return;
     var g = getChartData(state.rows);
     if (!g.out.length) return;
-    var h = 'Cliente;Código;Cumpl %;Margen %;Vendedor;Público/priv.;Licitación;Fact. esp.;Fact. real;Val. fact. MB;M. bruto;Potencial;Categoría\n';
+    var h = 'Cliente;Código;Cumpl %;Margen %;Territorio;Público/priv.;Licitación;Fact. esp.;Fact. real;Val. fact. MB;M. bruto;Potencial;Categoría\n';
     var b = h + g.out.map(function (o) {
       var r = o.row;
       return [r.cliente, r.codigo, o.x.toFixed(1), o.y.toFixed(1), r.vendedor, r.publico, r.licitacion,
@@ -1363,72 +976,51 @@
     if (a) { a.hidden = false; a.textContent = msg; }
   }
 
-  function runPipeline() {
-    if (!state.rawCC || !state.rawMB) return;
-    // Pipeline principal:
-    // - leer matrices
-    // - mapear columnas por heurística
-    // - validar mínimos requeridos
-    // - agregar y cruzar CC + MB
-    // - renderizar todo el dashboard
-    var cco = matrixToObjects(state.rawCC.matrix);
-    var mbo = matrixToObjects(state.rawMB.matrix);
-    var ccm = mapColumnsCC(cco.headers);
-    var mbm = mapColumnsMB(mbo.headers);
-    logDetection('Contract Compliance', ccm.map, cco.headers);
-    logDetection('MB Q1', mbm.map, mbo.headers);
-    var err = validateCC(ccm.map).concat(validateMB(mbm.map));
-    if (err.length) {
-      setUploadError(err.join(' '));
+  async function runPipeline() {
+    var files = state.files;
+    if (!files.territorySalesFile || !files.marginsFile || !files.contractsFile) return;
+    setUploadError('Procesando archivos con el motor comercial...');
+    try {
+      var analysisData = await loadCommercialData({
+        territorySalesFile: files.territorySalesFile,
+        marginsFile: files.marginsFile,
+        contractsFile: files.contractsFile
+      });
+      var dashboardModel = mapAnalysisDataToDashboardModel(analysisData);
+      state.analysisData = analysisData;
+      state.rows = dashboardModel.rows;
+      state.validationSummary = dashboardModel.validationSummary;
+      var a = document.getElementById('upload-alerts');
+      if (a) {
+        a.hidden = false;
+        a.textContent = 'Procesado: ' + state.validationSummary.customers + ' clientes - ' + state.validationSummary.contracts + ' contratos - ventas: ' + state.validationSummary.customersWithSales + ' - margenes: ' + state.validationSummary.customersWithMargins + ' - contratos: ' + state.validationSummary.customersWithContracts + '.';
+      }
+      var hint = document.getElementById('hint-both');
+      if (hint) hint.hidden = false;
+      console.info('[Motor comercial] analysisData:', analysisData);
+      console.info('[Motor comercial] validacion:', state.validationSummary);
+      if (!state.rows.length) {
+        setUploadError('El motor proceso los archivos, pero no devolvio clientes consolidados.');
+        showSections(false);
+        return;
+      }
+      runFullRender();
+    } catch (err) {
+      console.error('No se pudo procesar con el motor comercial:', err);
+      setUploadError(err && err.message ? err.message : 'No se pudo procesar con el motor comercial.');
       showSections(false);
-      return;
     }
-    var a = document.getElementById('upload-alerts');
-    if (a) a.hidden = true;
-    var hint = document.getElementById('hint-both');
-    if (hint) hint.hidden = false;
-    var ccAgg = aggregateCC(cco.rows, ccm.map);
-    var mbAgg = aggregateMB(mbo.rows, mbm.map);
-    state.rows = mergeData(ccAgg, mbAgg);
-    if (state.rawTerritory) {
-      var terrMap = parseTerritoryWorkbook(state.rawTerritory);
-      applyTerritoryData(state.rows, terrMap);
-      normalizeVendorNames(state.rows);
-    }
-    state.ccMeta = cco;
-    state.mbMeta = mbo;
-    state.territoryMeta = state.rawTerritory;
-    if (!state.rows.length) {
-      setUploadError('No se obtuvieron clientes al cruzar. Revisa códigos/nombres o duplicados vacíos.');
-      return;
-    }
-    runFullRender();
   }
 
   function handleFileInput(which) {
     return function (e) {
       var f = e.target.files && e.target.files[0];
       if (!f) return;
-      if (typeof XLSX === 'undefined') { setUploadError('SheetJS no se cargó. Comprueba la conexión a internet.'); return; }
-      var reader = (which === 'territory') ? readWorkbookToSheets : readSheetToMatrix;
-      reader(f, function (err, res) {
-        if (err) { setUploadError(err.message); return; }
-        if (which === 'cc') {
-          state.rawCC = { name: f.name, matrix: res.matrix, sheetName: res.sheetName };
-          var t = matrixToObjects(res.matrix);
-          setFileStatus('status-cc', f.name, t.rows.length, t.headers.length, ' · Hoja: ' + (res.sheetName || ''));
-        } else if (which === 'mb') {
-          state.rawMB = { name: f.name, matrix: res.matrix, sheetName: res.sheetName };
-          var t2 = matrixToObjects(res.matrix);
-          setFileStatus('status-mb', f.name, t2.rows.length, t2.headers.length, ' · Hoja: ' + (res.sheetName || ''));
-        } else if (which === 'territory') {
-          state.rawTerritory = { name: f.name, sheets: res.sheets, sheetNames: res.sheetNames };
-          var nRows = 0;
-          for (var si = 0; si < res.sheets.length; si++) nRows += Math.max(0, (res.sheets[si].matrix || []).length - 1);
-          setFileStatus('status-territory', f.name, nRows, res.sheetNames.length, ' · Hojas: ' + res.sheetNames.join(', '));
-        }
-        if (state.rawCC && state.rawMB) runPipeline();
-      });
+      state.files[which] = f;
+      if (which === 'territorySalesFile') setFileStatus('status-territory', f.name, '-', '-', '');
+      else if (which === 'marginsFile') setFileStatus('status-mb', f.name, '-', '-', '');
+      else if (which === 'contractsFile') setFileStatus('status-cc', f.name, '-', '-', '');
+      if (state.files.territorySalesFile && state.files.marginsFile && state.files.contractsFile) runPipeline();
     };
   }
 
@@ -1522,9 +1114,9 @@
     var fc = document.getElementById('file-cc');
     var fm = document.getElementById('file-mb');
     var ft = document.getElementById('file-territory');
-    if (fc) fc.addEventListener('change', handleFileInput('cc'));
-    if (fm) fm.addEventListener('change', handleFileInput('mb'));
-    if (ft) ft.addEventListener('change', handleFileInput('territory'));
+    if (fc) fc.addEventListener('change', handleFileInput('contractsFile'));
+    if (fm) fm.addEventListener('change', handleFileInput('marginsFile'));
+    if (ft) ft.addEventListener('change', handleFileInput('territorySalesFile'));
     wireMapSection();
     var exp = document.getElementById('btn-export-csv');
     if (exp) exp.addEventListener('click', exportCSV);

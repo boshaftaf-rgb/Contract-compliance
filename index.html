@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dashboard — Inteligencia comercial</title>
   <link rel="stylesheet" href="css/styles.css" />
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
 </head>
 <body>
@@ -19,8 +19,13 @@
 
     <section class="card section" id="section-upload">
       <h2>1. Carga de archivos</h2>
-      <p class="muted">Sube el Excel de <strong>Contract Compliance</strong>, el de <strong>MB Q1</strong> y opcionalmente <strong>Ventas por Territorio</strong> para enriquecer vendedor por cliente.</p>
+      <p class="muted">Sube los tres Excel comerciales: <strong>Ventas por Territorio</strong>, <strong>MB Q1</strong> y <strong>Contract Compliance</strong>. El procesamiento lo realiza el motor comercial reutilizable.</p>
       <div class="upload-grid">
+        <div class="upload-block">
+          <label class="upload-label" for="file-territory">Ventas por Territorio</label>
+          <input type="file" id="file-territory" accept=".xlsx,.xls" />
+          <div class="file-status" id="status-territory" data-empty>Archivo no cargado</div>
+        </div>
         <div class="upload-block">
           <label class="upload-label" for="file-cc">Contract Compliance (eje X: cumplimiento)</label>
           <input type="file" id="file-cc" accept=".xlsx,.xls" />
@@ -31,14 +36,9 @@
           <input type="file" id="file-mb" accept=".xlsx,.xls" />
           <div class="file-status" id="status-mb" data-empty>Archivo no cargado</div>
         </div>
-        <div class="upload-block">
-          <label class="upload-label" for="file-territory">Ventas por Territorio (opcional)</label>
-          <input type="file" id="file-territory" accept=".xlsx,.xls" />
-          <div class="file-status" id="status-territory" data-empty>Archivo no cargado</div>
-        </div>
       </div>
       <div class="alerts" id="upload-alerts" hidden></div>
-      <p class="hint" id="hint-both" hidden>Con ambos archivos cargados se actualiza el dashboard automáticamente.</p>
+      <p class="hint" id="hint-both" hidden>Con los tres archivos cargados se actualiza el dashboard automáticamente.</p>
     </section>
 
     <section class="card section" id="section-executive" hidden>
@@ -63,7 +63,7 @@
       <div class="strategic-chips-deck" id="strategic-filters">
         <div class="strategic-filter-card">
           <div class="strategic-card-head">
-            <span class="strategic-card-title">Vendedor</span>
+            <span class="strategic-card-title">Territorio</span>
             <button type="button" class="map-todos-link" id="map-vend-todos" data-todos="vend" title="Incluir todos">Todos</button>
           </div>
           <div class="chip-row" id="map-chips-vend"></div>
@@ -107,7 +107,7 @@
           <span class="strategic-ctrl-label">Color por</span>
           <select class="strategic-select" id="map-color-by">
             <option value="quadrant" selected>Cuadrante</option>
-            <option value="vendedor">Vendedor</option>
+            <option value="vendedor">Territorio</option>
             <option value="publico">Público / privado</option>
             <option value="licitacion">Licitación</option>
           </select>
@@ -170,7 +170,7 @@
 
     <section class="card section" id="section-segments" hidden>
       <h2>8. Análisis por segmento</h2>
-      <h3 class="h3">Por vendedor</h3>
+      <h3 class="h3">Por territorio</h3>
       <div class="data-table-wrap">
         <table class="data-table" id="table-seg-vendedor"><thead></thead><tbody></tbody></table>
       </div>
@@ -188,7 +188,7 @@
       <h2>9. Tabla inteligente</h2>
       <div class="table-toolbar">
         <input type="search" id="table-search" placeholder="Buscar por cliente o código…" class="search-input" />
-        <label>Vendedor <select id="filter-vendedor"><option value="">Todos</option></select></label>
+        <label>Territorio <select id="filter-vendedor"><option value="">Todos</option></select></label>
         <label>Público/privado <select id="filter-publico"><option value="">Todos</option></select></label>
         <label>Licitación <select id="filter-licit"><option value="">Todos</option></select></label>
         <label>Categoría <select id="filter-cat"><option value="">Todas</option></select></label>
@@ -206,6 +206,6 @@
 
   </div>
 
-  <script src="js/dashboard.js"></script>
+  <script type="module" src="js/dashboard.js"></script>
 </body>
 </html>
