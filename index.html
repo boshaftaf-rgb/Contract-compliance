@@ -19,7 +19,7 @@
 
     <section class="card section" id="section-upload">
       <h2>1. Carga de archivos</h2>
-      <p class="muted">Sube el Excel de <strong>Contract Compliance</strong> y el de <strong>MB Q1</strong>. La app detecta columnas aunque los nombres varíen ligeramente.</p>
+      <p class="muted">Sube el Excel de <strong>Contract Compliance</strong>, el de <strong>MB Q1</strong> y opcionalmente <strong>Ventas por Territorio</strong> para enriquecer vendedor por cliente.</p>
       <div class="upload-grid">
         <div class="upload-block">
           <label class="upload-label" for="file-cc">Contract Compliance (eje X: cumplimiento)</label>
@@ -30,6 +30,11 @@
           <label class="upload-label" for="file-mb">MB Q1 (eje Y: rentabilidad)</label>
           <input type="file" id="file-mb" accept=".xlsx,.xls" />
           <div class="file-status" id="status-mb" data-empty>Archivo no cargado</div>
+        </div>
+        <div class="upload-block">
+          <label class="upload-label" for="file-territory">Ventas por Territorio (opcional)</label>
+          <input type="file" id="file-territory" accept=".xlsx,.xls" />
+          <div class="file-status" id="status-territory" data-empty>Archivo no cargado</div>
         </div>
       </div>
       <div class="alerts" id="upload-alerts" hidden></div>

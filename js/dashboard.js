@@ -11,7 +11,7 @@
   // --- constantes: sinónimos para mapeo heurístico (columna detectada por subcadena) ---
   var CC_KEYS = {
     codigo: ['codigo', 'código', 'id cliente', 'idcliente', 'cod cliente', 'code', 'n° cliente', 'nº cliente', 'cód', 'nro codigo'],
-    cliente: ['cliente', 'razon', 'razón', 'customer', 'nombre', 'deudor', 'empresa', 'nombre cliente', 'razon social', 'ruc'],
+    cliente: ['cliente', 'razon', 'razón' , 'customer', 'nombre', 'deudor', 'empresa', 'nombre cliente', 'razon social', 'ruc'],
     vendedor: ['vendedor', 'vend', 'asesor', 'comercial', 'seller', 'ejecutiv', 'representant'],
     publico: ['publico', 'privado', 'sector', 'público', 'tipo', 'gob', 'gobierno', 'público/priv', 'público/privado'],
     licitacion: ['licit', 'concurso', 'lic tacion', 'remate'],
@@ -33,8 +33,10 @@
   var state = {
     rawCC: null,
     rawMB: null,
+    rawTerritory: null,
     ccMeta: null,
     mbMeta: null,
+    territoryMeta: null,
     rows: null,
     sortMain: { col: 'cliente', dir: 1 },
     cumpCut: 'median',
@@ -159,6 +161,24 @@
     fr.readAsArrayBuffer(file);
   }
 
+  function readWorkbookToSheets(file, cb) {
+    var fr = new FileReader();
+    fr.onload = function (e) {
+      var data = new Uint8Array(e.target.result);
+      var wb = XLSX.read(data, { type: 'array' });
+      var out = [];
+      for (var i = 0; i < wb.SheetNames.length; i++) {
+        var sn = wb.SheetNames[i];
+        var ws = wb.Sheets[sn];
+        var matrix = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+        out.push({ sheetName: sn, matrix: matrix });
+      }
+      cb(null, { sheets: out, sheetNames: wb.SheetNames.slice() });
+    };
+    fr.onerror = function () { cb(new Error('No se pudo leer el archivo')); };
+    fr.readAsArrayBuffer(file);
+  }
+
   function matrixToObjects(matrix) {
     if (!matrix || !matrix.length) return { headers: [], rows: [] };
     var headers = matrix[0].map(function (c) { return c == null ? '' : String(c).trim(); });
@@ -215,6 +235,78 @@
     var t = String(s).replace(/\s+/g, ' ').trim();
     if (!t || t === '-' || t === '—') return '—';
     return t.toUpperCase();
+  }
+
+  function parseTerritoryName(raw) {
+    if (raw == null) return '';
+    var t = String(raw).replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    t = t.replace(/^\d+\s*/g, '').replace(/^["'\-–—\s]+/, '');
+    var p = t.split(/\s{2,}/)[0];
+    if (p) t = p;
+    return t.trim();
+  }
+
+  function parseClientCodeFromRepClient(raw) {
+    if (raw == null) return '';
+    var t = String(raw).trim();
+    var m = t.match(/^(\d{6,})\b/);
+    return m ? m[1] : '';
+  }
+
+  function parseTerritoryWorkbook(rawTerritory) {
+    var byCode = {};
+    if (!rawTerritory || !rawTerritory.sheets || !rawTerritory.sheets.length) return byCode;
+    for (var s = 0; s < rawTerritory.sheets.length; s++) {
+      var matrix = rawTerritory.sheets[s].matrix || [];
+      if (!matrix.length) continue;
+      var hRow = -1, colTerr = -1, colRepCli = -1;
+      for (var r = 0; r < Math.min(matrix.length, 20); r++) {
+        var row = matrix[r] || [];
+        for (var c = 0; c < row.length; c++) {
+          var n = normKey(row[c] == null ? '' : String(row[c]));
+          if (n.indexOf('territorio') >= 0 || n.indexOf('region') >= 0) { hRow = r; colTerr = c; }
+          if (n.indexOf('representante') >= 0 || n.indexOf('representante cliente') >= 0 || n.indexOf('cliente') >= 0) { hRow = r; colRepCli = c; }
+        }
+      }
+      if (hRow < 0 || colRepCli < 0) continue;
+      var currentVend = '';
+      var currentTerr = '';
+      for (var rr = hRow + 1; rr < matrix.length; rr++) {
+        var line = matrix[rr] || [];
+        var terrRaw = colTerr >= 0 ? line[colTerr] : '';
+        var repCliRaw = line[colRepCli];
+        var repCli = repCliRaw == null ? '' : String(repCliRaw).trim();
+        var terrTxt = terrRaw == null ? '' : String(terrRaw).trim();
+        if (!repCli && !terrTxt) continue;
+        if (terrTxt) {
+          var terrN = parseTerritoryName(terrTxt);
+          if (terrN) currentTerr = terrN;
+        }
+        var code = parseClientCodeFromRepClient(repCli);
+        if (!code) {
+          var maybeVend = cleanVendorName(repCli);
+          if (maybeVend && maybeVend !== '—') currentVend = maybeVend;
+          continue;
+        }
+        if (!currentVend) continue;
+        byCode[normKey(code)] = { vendedor: currentVend, territorio: currentTerr || '—' };
+      }
+    }
+    return byCode;
+  }
+
+  function applyTerritoryData(rows, terrMap) {
+    if (!rows || !rows.length || !terrMap) return;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var c = (r.codigo && r.codigo !== '—') ? normKey(r.codigo) : '';
+      if (!c) continue;
+      var hit = terrMap[c];
+      if (!hit) continue;
+      if (hit.vendedor) r.vendedor = hit.vendedor;
+      if (hit.territorio) r.territorio = hit.territorio;
+    }
   }
 
   function aggregateCC(rows, map) {
@@ -483,7 +575,11 @@
   // --- riesgos y oportunidades (listas) ---
   function listRisks(rows) {
     var a = rows.slice();
-    a.sort(function (a, b) { return (b.fact_real * (1 - (isNaN(b.cump) ? 0 : b.cump))) - (a.fact_real * (1 - (isNaN(a.cump) ? 0 : a.cump))); });
+    a.sort(function (a, b) {
+      var sb = (!isNaN(b.fact_real) && !isNaN(b.cump)) ? (b.fact_real * (1 - b.cump)) : -Infinity;
+      var sa = (!isNaN(a.fact_real) && !isNaN(a.cump)) ? (a.fact_real * (1 - a.cump)) : -Infinity;
+      return sb - sa;
+    });
     return a;
   }
   function listOpp(rows) {
@@ -530,7 +626,7 @@
     var c5 = topShare(rows, 5, function (r) { return r.fact_real; });
     var c10 = topShare(rows, 10, function (r) { return r.fact_real; });
     var kopp = rows.filter(function (r) { return r.categoriaCode === 'opp'; }).length;
-    var highValLowC = rows.filter(function (r) { return r.fact_real > k.tr * 0.02 && (isNaN(r.cump) ? true : r.cump < 0.85); }).length;
+    var highValLowC = rows.filter(function (r) { return !isNaN(r.cump) && r.fact_real > k.tr * 0.02 && r.cump < 0.85; }).length;
     var parts = [
       'El cumplimiento ponderado general (Σ real / Σ esperado) es de ' + (isNaN(k.cumpPond) ? 'N/D' : fmtPct(k.cumpPond) + '.'),
       k.negM + ' ' + (k.negM === 1 ? 'cliente tiene' : 'clientes tienen') + ' margen % negativo en su línea agregada de MB.',
@@ -663,38 +759,21 @@
     return { ok: true };
   }
 
-  /**
-   * Medianas de cumpl. y margen (0–1) con datos reales, para imputar solo eje faltante (evita L en ejes a 0).
-   */
-  function computeMedianAxisImputes(allRows) {
-    var cR = [], mR = [];
-    for (var u = 0; u < allRows.length; u++) {
-      var w = allRows[u], fe = +w.fact_esp, fr = +w.fact_real, vf = +w.valor_fact, mbr = +w.margen_bruto;
-      if (fe > 0 && !isNaN(fr) && isFinite(fr) && isFinite(fe)) cR.push(fr / fe);
-      if (vf > 0 && isFinite(mbr) && isFinite(vf)) mR.push(mbr / vf);
-    }
-    var mc = medianOf(cR);
-    var mm = medianOf(mR);
-    if (isNaN(mc)) mc = 0.5;
-    if (isNaN(mm)) mm = 0.1;
-    return { imputeXPct: mc * 100, imputeYPct: mm * 100 };
-  }
-
-  /** Cumplimiento en % para eje: si no hay meta CC, se imputa mediana (no 0) para despegar del eje Y. */
-  function chartAxisCumplPct(r, imputeXPct) {
+  /** Cumplimiento en % para eje: acepta valor calculado con base real del mismo cliente. */
+  function resolveCumplAxis(r) {
     var v = toPercentValue(r.cump);
-    if (v != null && isFinite(v)) return v;
+    if (v != null && isFinite(v)) return { value: v, source: 'calculado (fact. real / fact. esperada)' };
     var fe = +r.fact_esp, fr = +r.fact_real;
-    if (fe > 0 && isFinite(fe) && isFinite(fr)) return (fr / fe) * 100;
-    if ((fe === 0 || isNaN(fe)) && fr > 0) return 100;
-    return imputeXPct;
+    if (fe > 0 && isFinite(fe) && isFinite(fr)) return { value: (fr / fe) * 100, source: 'calculado (fact. real / fact. esperada)' };
+    return { value: null, source: 'faltante', missing: 'cumplimiento (fact. esp./fact. real)' };
   }
-  function chartAxisMargenPct(r, imputeYPct) {
+  /** Margen en % para eje: acepta valor calculado con base real del mismo cliente. */
+  function resolveMargenAxis(r) {
     var v2 = toPercentValue(r.margen_pct);
-    if (v2 != null && isFinite(v2)) return v2;
+    if (v2 != null && isFinite(v2)) return { value: v2, source: 'calculado (margen bruto / valor facturado)' };
     var vf = +r.valor_fact, mb = +r.margen_bruto;
-    if (vf > 0 && isFinite(vf) && isFinite(mb)) return (mb / vf) * 100;
-    return imputeYPct;
+    if (vf > 0 && isFinite(vf) && isFinite(mb)) return { value: (mb / vf) * 100, source: 'calculado (margen bruto / valor facturado)' };
+    return { value: null, source: 'faltante', missing: 'margen (valor fact./margen bruto)' };
   }
 
   function getChartData(allRows) {
@@ -702,6 +781,7 @@
     // 1) chips/filtros, 2) búsqueda, 3) umbrales, 4) ejes y tamaño/color de burbuja.
     var nCross = allRows && allRows.length ? allRows.length : 0;
     var discarded = [];
+    var quality = { xMissing: 0, yMissing: 0, bothMissing: 0, plotted: 0, evaluated: 0 };
     var out = [];
     var afterVend = 0, withXY = 0;
     var q = (document.getElementById('map-search') && document.getElementById('map-search').value || '').trim().toLowerCase();
@@ -713,11 +793,11 @@
     var colorBy = (document.getElementById('map-color-by') && document.getElementById('map-color-by').value) || 'quadrant';
     var sizeBy = (document.getElementById('map-size-by') && document.getElementById('map-size-by').value) || 'contratos';
     var xLog = (document.getElementById('map-x-scale') && document.getElementById('map-x-scale').value) === 'log';
-    var imputes = computeMedianAxisImputes(allRows);
     var tCu0 = state.cumpThresh, tMu0 = state.margThresh;
     if (isNaN(tCu0)) tCu0 = 0.5; if (isNaN(tMu0)) tMu0 = 0.1;
     for (var j = 0; j < nCross; j++) {
       var r2 = allRows[j];
+      quality.evaluated += 1;
       var prf = passMapSetFilters(r2);
       if (!prf.ok) {
         discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'filtro: ' + prf.reason });
@@ -729,9 +809,20 @@
         if (blob.indexOf(q) < 0) { discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'búsqueda' }); continue; }
       }
       if (minC > 0 && (+r2.contratos || 0) < minC) { discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'N° contratos < mín.' }); continue; }
-      var xP = chartAxisCumplPct(r2, imputes.imputeXPct);
-      var yP = chartAxisMargenPct(r2, imputes.imputeYPct);
-      if (isNaN(xP) || isNaN(yP)) { discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'eje x/y no num.' }); continue; }
+      var xMeta = resolveCumplAxis(r2);
+      var yMeta = resolveMargenAxis(r2);
+      var xP = xMeta.value;
+      var yP = yMeta.value;
+      if (!isFinite(xP) || !isFinite(yP)) {
+        if (!isFinite(xP) && !isFinite(yP)) quality.bothMissing += 1;
+        else if (!isFinite(xP)) quality.xMissing += 1;
+        else quality.yMissing += 1;
+        var missReason = (!isFinite(xP) && !isFinite(yP))
+          ? (xMeta.missing + ' + ' + yMeta.missing)
+          : (!isFinite(xP) ? xMeta.missing : yMeta.missing);
+        discarded.push({ key: r2.key, cliente: r2.cliente, reason: missReason });
+        continue;
+      }
       withXY++;
       if (minCumpP > 0 && xP < minCumpP) { discarded.push({ key: r2.key, cliente: r2.cliente, reason: 'cumpl. < mín. %' }); continue; }
       if (xLog && xP <= 0) xP = 0.01;
@@ -747,10 +838,12 @@
       else cMark = colorForMapRow(r2, colorBy);
       out.push({
         row: r2, x: xP, y: yP, size: sz,
-        plotQuadrantCode: plotQ, color: cMark
+        plotQuadrantCode: plotQ, color: cMark,
+        xSource: xMeta.source, ySource: yMeta.source
       });
+      quality.plotted += 1;
     }
-    return { nCross: nCross, afterVend: afterVend, withXY: withXY, out: out, discarded: discarded, colorBy: colorBy, sizeBy: sizeBy, xLog: xLog, minCumpP: minCumpP, minC: minC, q: q };
+    return { nCross: nCross, afterVend: afterVend, withXY: withXY, out: out, discarded: discarded, colorBy: colorBy, sizeBy: sizeBy, xLog: xLog, minCumpP: minCumpP, minC: minC, q: q, quality: quality };
   }
 
   function debugChartData(g, allRows) {
@@ -774,6 +867,7 @@
       (r.cliente || '—'), 'Cód: ' + (r.codigo || '—'), 'Vend: ' + (r.vendedor || '—'),
       'Publ./priv.: ' + (r.publico || '—'), 'Licit.: ' + (r.licitacion || '—'),
       'Cumpl. %: ' + o.x.toFixed(1), 'Margen %: ' + o.y.toFixed(1),
+      'Origen eje X: ' + (o.xSource || '—'), 'Origen eje Y: ' + (o.ySource || '—'),
       'Fact. esp.: ' + fmtMoney(r.fact_esp), 'Fact. real: ' + fmtMoney(r.fact_real),
       'Val. fact. MB: ' + fmtMoney(r.valor_fact), 'M. bruto: ' + fmtMoney(r.margen_bruto),
       'Potencial: ' + fmtMoney(r.pot), 'Categoría: ' + (r.categoria || '—')
@@ -873,23 +967,33 @@
     } };
   }
 
-  function updateMapMedianBar() {
+  function updateMapMedianBar(g) {
     var el = document.getElementById('map-median-text');
     if (!el) return;
     var tC = state.cumpThresh, tM = state.margThresh;
     if (isNaN(tC)) tC = 0.5; if (isNaN(tM)) tM = 0.1;
-    el.textContent = 'Líneas de mediana: Cumplimiento = ' + (tC * 100).toFixed(1) + '%, margen = ' + (tM * 100).toFixed(1) + '% (cartera completa).';
+    var base = 'Líneas de mediana: Cumplimiento = ' + (tC * 100).toFixed(1) + '%, margen = ' + (tM * 100).toFixed(1) + '% (cartera completa).';
+    if (!g || !g.quality) { el.textContent = base; return; }
+    var q = g.quality;
+    var miss = q.xMissing + q.yMissing + q.bothMissing;
+    var qualityTxt = ' Evaluados: ' + q.evaluated + '. Graficados: ' + q.plotted + '. Excluidos por faltantes: ' + miss +
+      ' (sin X: ' + q.xMissing + ', sin Y: ' + q.yMissing + ', sin ambos: ' + q.bothMissing + ').';
+    el.textContent = base + qualityTxt;
   }
 
   function updateStrategicMap() {
     var box = document.getElementById('strategic-map-empty');
-    updateMapMedianBar();
     if (typeof Plotly === 'undefined') { console.warn('Plotly no disponible'); if (box) { box.hidden = false; box.textContent = 'No se pudo cargar Plotly.'; } return; }
     var R = state.rows; if (!R) return;
     var g = getChartData(R);
+    updateMapMedianBar(g);
     debugChartData(g, R);
     if (g.out.length === 0) {
-      if (box) { box.hidden = false; box.textContent = 'No hay clientes graficables con los filtros actuales.'; }
+      if (box) {
+        var q = g.quality || { xMissing: 0, yMissing: 0, bothMissing: 0 };
+        box.hidden = false;
+        box.textContent = 'No hay clientes graficables con los filtros actuales. Faltantes: sin X=' + q.xMissing + ', sin Y=' + q.yMissing + ', sin ambos=' + q.bothMissing + '.';
+      }
       try { Plotly.purge('plotly-chart'); } catch (e) {}
     } else {
       if (box) box.hidden = true;
@@ -922,7 +1026,9 @@
     var a = [];
     for (var k6 in byKey) { if (byKey.hasOwnProperty(k6)) a.push(byKey[k6].r); }
     a.sort(function (x, y) {
-      return y.fact_real * (isNaN(y.cump) ? 0.5 : (1 - y.cump)) - x.fact_real * (isNaN(x.cump) ? 0.5 : (1 - x.cump));
+      var sy = (!isNaN(y.fact_real) && !isNaN(y.cump)) ? (y.fact_real * (1 - y.cump)) : -Infinity;
+      var sx = (!isNaN(x.fact_real) && !isNaN(x.cump)) ? (x.fact_real * (1 - x.cump)) : -Infinity;
+      return sy - sx;
     });
     return a;
   }
@@ -1002,7 +1108,7 @@
     var fl = document.getElementById('filter-licit').value;
     var fc = document.getElementById('filter-cat').value;
     var flt = document.getElementById('filter-bajo-cump').value;
-    var tC2 = state.cumpThres;
+    var tC2 = state.cumpThresh;
     return rows.filter(function (r) {
       if (q && (String(r.cliente) + ' ' + String(r.codigo)).toLowerCase().indexOf(q) < 0) return false;
       if (fv && (r.vendedor || '—') !== fv) return false;
@@ -1066,11 +1172,15 @@
     renderExec(state.rows);
     renderKPIs(state.rows);
     renderInsights(state.rows);
-    drawChart(state.rows);
     renderRisks(state.rows);
     renderOpps(state.rows);
     renderSegments(state.rows);
     renderMainTable();
+    try {
+      drawChart(state.rows);
+    } catch (e) {
+      console.error('No se pudo renderizar el mapa estratégico:', e);
+    }
   }
 
   function runFullRender() {
@@ -1280,8 +1390,14 @@
     var ccAgg = aggregateCC(cco.rows, ccm.map);
     var mbAgg = aggregateMB(mbo.rows, mbm.map);
     state.rows = mergeData(ccAgg, mbAgg);
+    if (state.rawTerritory) {
+      var terrMap = parseTerritoryWorkbook(state.rawTerritory);
+      applyTerritoryData(state.rows, terrMap);
+      normalizeVendorNames(state.rows);
+    }
     state.ccMeta = cco;
     state.mbMeta = mbo;
+    state.territoryMeta = state.rawTerritory;
     if (!state.rows.length) {
       setUploadError('No se obtuvieron clientes al cruzar. Revisa códigos/nombres o duplicados vacíos.');
       return;
@@ -1294,16 +1410,22 @@
       var f = e.target.files && e.target.files[0];
       if (!f) return;
       if (typeof XLSX === 'undefined') { setUploadError('SheetJS no se cargó. Comprueba la conexión a internet.'); return; }
-      readSheetToMatrix(f, function (err, res) {
+      var reader = (which === 'territory') ? readWorkbookToSheets : readSheetToMatrix;
+      reader(f, function (err, res) {
         if (err) { setUploadError(err.message); return; }
         if (which === 'cc') {
           state.rawCC = { name: f.name, matrix: res.matrix, sheetName: res.sheetName };
           var t = matrixToObjects(res.matrix);
           setFileStatus('status-cc', f.name, t.rows.length, t.headers.length, ' · Hoja: ' + (res.sheetName || ''));
-        } else {
+        } else if (which === 'mb') {
           state.rawMB = { name: f.name, matrix: res.matrix, sheetName: res.sheetName };
           var t2 = matrixToObjects(res.matrix);
           setFileStatus('status-mb', f.name, t2.rows.length, t2.headers.length, ' · Hoja: ' + (res.sheetName || ''));
+        } else if (which === 'territory') {
+          state.rawTerritory = { name: f.name, sheets: res.sheets, sheetNames: res.sheetNames };
+          var nRows = 0;
+          for (var si = 0; si < res.sheets.length; si++) nRows += Math.max(0, (res.sheets[si].matrix || []).length - 1);
+          setFileStatus('status-territory', f.name, nRows, res.sheetNames.length, ' · Hojas: ' + res.sheetNames.join(', '));
         }
         if (state.rawCC && state.rawMB) runPipeline();
       });
@@ -1399,8 +1521,10 @@
   function wireEvents() {
     var fc = document.getElementById('file-cc');
     var fm = document.getElementById('file-mb');
+    var ft = document.getElementById('file-territory');
     if (fc) fc.addEventListener('change', handleFileInput('cc'));
     if (fm) fm.addEventListener('change', handleFileInput('mb'));
+    if (ft) ft.addEventListener('change', handleFileInput('territory'));
     wireMapSection();
     var exp = document.getElementById('btn-export-csv');
     if (exp) exp.addEventListener('click', exportCSV);
