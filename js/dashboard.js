@@ -24,6 +24,28 @@ import { processCommercialExcels } from "./core/index.js";
   };
 
   /**
+   * Escapa texto para inserción en HTML (datos externos, p. ej. celdas Excel).
+   * QA manual en producción (sin hooks): en un XLSX de prueba, en la celda de nombre de cliente
+   * pegar exactamente: <img src=x onerror="alert('XSS')">. Tras cargar los tres archivos, debe
+   * mostrarse como texto (sin alert, sin imagen); el HTML se neutraliza vía entidades (&lt; &gt; …).
+   */
+  function escapeHTML(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /** Solo códigos de cuadrante internos en `class="cat-*"` (evita inyección en atributo class). */
+  var QUADRANT_CLASS_CODES = { ideal: 1, opp: 1, prices: 1, urgent: 1, none: 1, unknown: 1 };
+  function quadrantClassSuffix(code) {
+    var c = code == null || code === '' ? 'unknown' : String(code);
+    return QUADRANT_CLASS_CODES[c] ? c : 'unknown';
+  }
+
+  /**
    * Filtros sección 5 (mapa estratégico): territorio, público/privado, licitación.
    * null = todos; Set = OR dentro de cada dimensión.
    */
@@ -451,7 +473,7 @@ import { processCommercialExcels } from "./core/index.js";
       (highValLowC ? 'Hay ' + highValLowC + ' clientes con carga material y cumplimiento por debajo del 85% — revisar prioridad y riesgo (tabla de riesgos).' : 'Revisar clientes con brecha de cumplimiento (mapa y tabla).')
     ];
     var h = document.getElementById('executive-text');
-    h.innerHTML = parts.map(function (p) { return '<div class="exec-line">' + p + '</div>'; }).join('');
+    h.innerHTML = parts.map(function (p) { return '<div class="exec-line">' + escapeHTML(p) + '</div>'; }).join('');
   }
 
   function readThresholdsFromUI() {
@@ -512,14 +534,14 @@ import { processCommercialExcels } from "./core/index.js";
         var r = conPot[h2];
         var nm = String(r.cliente || r.codigo || '—');
         if (nm.length > 40) nm = nm.substring(0, 37) + '…';
-        parts2.push(nm + ' (' + fmtMoney(r.pot) + ')');
+        parts2.push(escapeHTML(nm) + ' (' + fmtMoney(r.pot) + ')');
       }
       var tail = conPot.length > 3 ? ' Además, ' + (conPot.length - 3) + ' con brecha en cifra menor, pero a seguir al radar.' : '';
       t.push('Cuentas con mayor atraso hacia la meta (por monto a recuperar): ' + parts2.join(' · ') + '.' + tail);
     }
     if (!isNaN(k.margPond) && k.margPond < 0.12) t.push('Margen % de la cartera por debajo del 12%: presión de rentabilidad en el agregado; revisa precio y mix con margen aceptable.');
     if (k.oppN > 0) t.push(k.oppN + ' cliente' + (k.oppN === 1 ? '' : 's') + ' con buen margen pero bajo avance hacia la meta: prioridad comercial o de condición de contrato (cuadrante Oportunidad en el mapa).');
-    ul.innerHTML = t.map(function (x) { return '<li>' + x + '</li>'; }).join('');
+    ul.innerHTML = t.map(function (x) { return '<li>' + escapeHTML(x) + '</li>'; }).join('');
   }
 
   var COL = { ideal: '#22c55e', opp: '#f59e0b', prices: '#3b82f6', urgent: '#ef4444', none: '#6b7280' };
@@ -685,13 +707,13 @@ import { processCommercialExcels } from "./core/index.js";
   function buildMapPointHover(o) {
     var r = o.row;
     return [
-      (r.cliente || '—'), 'Cód: ' + (r.codigo || '—'), 'Territorio: ' + (r.territory || '—'),
-      'Publ./priv.: ' + (r.publico || '—'), 'Licit.: ' + (r.licitacion || '—'),
+      escapeHTML(r.cliente || '—'), 'Cód: ' + escapeHTML(r.codigo || '—'), 'Territorio: ' + escapeHTML(r.territory || '—'),
+      'Publ./priv.: ' + escapeHTML(r.publico || '—'), 'Licit.: ' + escapeHTML(r.licitacion || '—'),
       'Cumpl. %: ' + o.x.toFixed(1), 'Margen %: ' + o.y.toFixed(1),
-      'Origen eje X: ' + (o.xSource || '—'), 'Origen eje Y: ' + (o.ySource || '—'),
+      'Origen eje X: ' + escapeHTML(o.xSource || '—'), 'Origen eje Y: ' + escapeHTML(o.ySource || '—'),
       'Fact. esp.: ' + fmtMoney(r.fact_esp), 'Fact. real: ' + fmtMoney(r.fact_real),
       'Val. fact. MB: ' + fmtMoney(r.valor_fact), 'M. bruto: ' + fmtMoney(r.margen_bruto),
-      'Potencial: ' + fmtMoney(r.pot), 'Categoría: ' + (r.categoria || '—')
+      'Potencial: ' + fmtMoney(r.pot), 'Categoría: ' + escapeHTML(r.categoria || '—')
     ].join('<br>');
   }
 
@@ -710,11 +732,11 @@ import { processCommercialExcels } from "./core/index.js";
         var sel2 = out.filter(function (o) { return (o.plotQuadrantCode || o.row.categoriaCode || 'none') === code2; });
         if (!sel2.length) continue;
         var lab = qNames[code2] || code2;
-        var prefix = '<b>' + lab + '</b><br>';
+        var prefix = '<b>' + escapeHTML(lab) + '</b><br>';
         data.push({
           x: sel2.map(function (o) { return o.x; }),
           y: sel2.map(function (o) { return o.y; }),
-          text: sel2.map(function (o) { return o.row.cliente || ''; }),
+          text: sel2.map(function (o) { return escapeHTML(o.row.cliente || ''); }),
           name: lab,
           mode: 'markers',
           type: 'scatter',
@@ -734,7 +756,7 @@ import { processCommercialExcels } from "./core/index.js";
       data.push({
         x: out.map(function (o) { return o.x; }),
         y: out.map(function (o) { return o.y; }),
-        text: out.map(function (o) { return o.row.cliente || ''; }),
+        text: out.map(function (o) { return escapeHTML(o.row.cliente || ''); }),
         name: 'Clientes',
         mode: 'markers',
         type: 'scatter',
@@ -922,17 +944,12 @@ import { processCommercialExcels } from "./core/index.js";
     return a;
   }
 
-  function fillSimpleTable(tbody, thead, headers, list, rowFn) {
-    thead.innerHTML = '<tr>' + headers.map(function (h) { return '<th>' + h + '</th>'; }).join('') + '</tr>';
-    tbody.innerHTML = list.map(function (r) { return rowFn(r); }).join('');
-  }
-
   function renderRisks(rows) {
     var th = document.querySelector('#table-risks thead');
     var tb = document.querySelector('#table-risks tbody');
     var L = buildRiskList(rows).slice(0, 40);
     th.innerHTML = '<tr><th>Cliente</th><th>Código</th><th>Fact. real</th><th>Cump %</th><th>Margen %</th><th>Valor fact. MB</th><th>Cat.</th></tr>';
-    tb.innerHTML = L.map(function (r) { return '<tr' + (r.margen_pct < 0 ? ' class="row-danger"' : '') + '><td data-text>' + (r.cliente || '') + '</td><td data-text>' + (r.codigo || '') + '</td><td>' + fmtMoney(r.fact_real) + '</td><td>' + fmtPct(r.cump) + '</td><td>' + fmtPct(r.margen_pct) + '</td><td>' + fmtMoney(r.valor_fact) + '</td><td class="cat-' + (r.categoriaCode || 'unknown') + '">' + (r.categoria || '') + '</td></tr>'; }).join('');
+    tb.innerHTML = L.map(function (r) { return '<tr' + (r.margen_pct < 0 ? ' class="row-danger"' : '') + '><td data-text>' + escapeHTML(r.cliente || '') + '</td><td data-text>' + escapeHTML(r.codigo || '') + '</td><td>' + fmtMoney(r.fact_real) + '</td><td>' + fmtPct(r.cump) + '</td><td>' + fmtPct(r.margen_pct) + '</td><td>' + fmtMoney(r.valor_fact) + '</td><td class="cat-' + quadrantClassSuffix(r.categoriaCode) + '">' + escapeHTML(r.categoria || '') + '</td></tr>'; }).join('');
   }
 
   function renderOpps(rows) {
@@ -940,7 +957,7 @@ import { processCommercialExcels } from "./core/index.js";
     var tb2 = document.querySelector('#table-ops tbody');
     var L2 = listOpp(rows);
     th2.innerHTML = '<tr><th>Cliente</th><th>Código</th><th>Potencial (esp - real)</th><th>Fact. esperada</th><th>Fact. real</th><th>Cump %</th><th>Margen %</th></tr>';
-    tb2.innerHTML = L2.map(function (r) { return '<tr class="row-warn"><td data-text>' + (r.cliente || '') + '</td><td data-text>' + (r.codigo || '') + '</td><td>' + fmtMoney(r.pot) + '</td><td>' + fmtMoney(r.fact_esp) + '</td><td>' + fmtMoney(r.fact_real) + '</td><td>' + fmtPct(r.cump) + '</td><td>' + fmtPct(r.margen_pct) + '</td></tr>'; }).join('');
+    tb2.innerHTML = L2.map(function (r) { return '<tr class="row-warn"><td data-text>' + escapeHTML(r.cliente || '') + '</td><td data-text>' + escapeHTML(r.codigo || '') + '</td><td>' + fmtMoney(r.pot) + '</td><td>' + fmtMoney(r.fact_esp) + '</td><td>' + fmtMoney(r.fact_real) + '</td><td>' + fmtPct(r.cump) + '</td><td>' + fmtPct(r.margen_pct) + '</td></tr>'; }).join('');
   }
 
   function renderSegments(rows) {
@@ -950,7 +967,7 @@ import { processCommercialExcels } from "./core/index.js";
       th3.innerHTML = '<tr><th>Segmento</th><th>Clientes</th><th>Fact. esp.</th><th>Fact. real</th><th>Cumpl. % *</th><th>M. bruto</th><th>Margen % *</th></tr>';
       tb3.innerHTML = list.map(function (s) {
         var cP = s.te > 0 ? s.tr / s.te : NaN, mP = s.tf > 0 ? s.tmb / s.tf : NaN;
-        return '<tr><td data-text>' + s.label + '</td><td>' + s.n + '</td><td>' + fmtMoney(s.te) + '</td><td>' + fmtMoney(s.tr) + '</td><td>' + fmtPct(cP) + '</td><td>' + fmtMoney(s.tmb) + '</td><td>' + fmtPct(mP) + '</td></tr>';
+        return '<tr><td data-text>' + escapeHTML(s.label) + '</td><td>' + s.n + '</td><td>' + fmtMoney(s.te) + '</td><td>' + fmtMoney(s.tr) + '</td><td>' + fmtPct(cP) + '</td><td>' + fmtMoney(s.tmb) + '</td><td>' + fmtPct(mP) + '</td></tr>';
       }).join('');
     }
     one('table-seg-vendedor', groupSegment(rows, function (r) { return r.territory || SIN_TERRITORIO; }));
@@ -964,7 +981,7 @@ import { processCommercialExcels } from "./core/index.js";
   }
 
   function populateFilters(rows) {
-    var opts = function (elId, allLabel, values) { var s = document.getElementById(elId); s.innerHTML = '<option value="">' + allLabel + '</option>'; values.forEach(function (v) { var o = document.createElement('option'); o.value = v; o.textContent = v; s.appendChild(o); }); };
+    var opts = function (elId, allLabel, values) { var s = document.getElementById(elId); s.innerHTML = '<option value="">' + escapeHTML(allLabel) + '</option>'; values.forEach(function (v) { var o = document.createElement('option'); o.value = v; o.textContent = v; s.appendChild(o); }); };
     opts('filter-vendedor', 'Todos', distinctVals(rows, function (r) { return r.territory || SIN_TERRITORIO; }));
     opts('filter-publico', 'Todos', distinctVals(rows, function (r) { return r.publico || '—'; }));
     opts('filter-licit', 'Todos', distinctVals(rows, function (r) { return r.licitacion || '—'; }));
@@ -1004,8 +1021,8 @@ import { processCommercialExcels } from "./core/index.js";
     if (k === 'cump' || k === 'margen_pct') return fmtPct(r[k]);
     if (k === 'contratos') return (r[k] == null || isNaN(r[k])) ? '—' : String(Math.round(r[k]));
     if (k === 'fact_esp' || k === 'fact_real' || k === 'valor_fact' || k === 'margen_bruto' || k === 'pot') return fmtMoney(r[k]);
-    if (k === 'categoria') return '<span class="cat-' + (r.categoriaCode || 'unknown') + '">' + (r.categoria || '') + '</span>';
-    return (r[k] == null || r[k] === undefined) ? '—' : String(r[k]);
+    if (k === 'categoria') return '<span class="cat-' + quadrantClassSuffix(r.categoriaCode) + '">' + escapeHTML(r.categoria || '') + '</span>';
+    return (r[k] == null || r[k] === undefined) ? '—' : escapeHTML(String(r[k]));
   }
 
   function isTextCol(c) {
