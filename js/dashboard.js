@@ -1259,19 +1259,49 @@ import { processCommercialExcels } from "./core/index.js";
   function setFileStatus(id, name, nRows, nCols, extra) {
     var el = document.getElementById(id);
     if (!el) return;
-    if (!name) { el.setAttribute('data-empty', '1'); el.textContent = 'Archivo no cargado'; return; }
+    var fnameEl = document.getElementById(String(id).replace(/^status-/, 'filename-'));
+    if (!name) {
+      el.setAttribute('data-empty', '1');
+      el.textContent = 'Archivo no cargado';
+      if (fnameEl) fnameEl.textContent = 'Sin archivos seleccionados';
+      return;
+    }
     el.removeAttribute('data-empty');
     el.textContent = 'Archivo: ' + name + '\nFilas: ' + nRows + ' · Columnas: ' + nCols + (extra || '');
+    if (fnameEl) fnameEl.textContent = name;
   }
 
   function setUploadError(msg) {
     var a = document.getElementById('upload-alerts');
-    if (a) { a.hidden = false; a.textContent = msg; }
+    if (a) {
+      a.hidden = false;
+      a.classList.remove('alerts--info');
+      a.textContent = msg;
+    }
+  }
+
+  function updateFileLoadHint() {
+    var hint = document.getElementById('file-load-hint');
+    if (!hint) return;
+    if (state.files.territorySalesFile && state.files.marginsFile && state.files.contractsFile) {
+      hint.hidden = true;
+      hint.textContent = '';
+      return;
+    }
+    var n = (state.files.territorySalesFile ? 1 : 0) + (state.files.marginsFile ? 1 : 0) + (state.files.contractsFile ? 1 : 0);
+    hint.hidden = false;
+    hint.textContent =
+      'Archivos elegidos: ' + n + '/3. Cuando los tres estén cargados, el análisis se ejecutará automáticamente.';
   }
 
   async function runPipeline() {
     var files = state.files;
     if (!files.territorySalesFile || !files.marginsFile || !files.contractsFile) return;
+    var flh = document.getElementById('file-load-hint');
+    if (flh) {
+      flh.hidden = true;
+      flh.textContent = '';
+    }
     setUploadError('Procesando archivos con el motor comercial...');
     try {
       var analysisData = await loadCommercialData({
@@ -1286,6 +1316,7 @@ import { processCommercialExcels } from "./core/index.js";
       var a = document.getElementById('upload-alerts');
       if (a) {
         a.hidden = false;
+        a.classList.remove('alerts--info');
         a.textContent = 'Procesado: ' + state.validationSummary.customers + ' clientes - ' + state.validationSummary.contracts + ' contratos - ventas: ' + state.validationSummary.customersWithSales + ' - margenes: ' + state.validationSummary.customersWithMargins + ' - contratos: ' + state.validationSummary.customersWithContracts + '.';
       }
       var hint = document.getElementById('hint-both');
@@ -1313,6 +1344,7 @@ import { processCommercialExcels } from "./core/index.js";
       if (which === 'territorySalesFile') setFileStatus('status-territory', f.name, '-', '-', '');
       else if (which === 'marginsFile') setFileStatus('status-mb', f.name, '-', '-', '');
       else if (which === 'contractsFile') setFileStatus('status-cc', f.name, '-', '-', '');
+      updateFileLoadHint();
       if (state.files.territorySalesFile && state.files.marginsFile && state.files.contractsFile) runPipeline();
     };
   }
@@ -1433,6 +1465,7 @@ import { processCommercialExcels } from "./core/index.js";
         }
       });
     }
+    window.__CC_DASH_READY__ = true;
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireEvents);

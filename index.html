@@ -10,35 +10,53 @@
   <script src="./vendor/plotly-2.30.0.min.js"></script>
 </head>
 <body>
+  <div class="top-brand-bar" aria-hidden="true"></div>
   <div class="app">
     <header class="app-header">
-      <div>
+      <div class="app-header__text">
         <h1>Dashboard de inteligencia comercial</h1>
         <p class="app-sub">Cruce Contract Compliance × MB Q1 — decisión y riesgo, no operativa de ventas</p>
       </div>
+      <div class="app-header__logos">
+        <img class="app-header__logo" src="./brand/winner%20logo.png" alt="Wiener lab Group" />
+        <img class="app-header__logo app-header__logo--360" src="./brand/Logo%20360.png" alt="360 Consulting" />
+      </div>
     </header>
 
-    <section class="card section" id="section-upload">
+    <section class="card section card--upload" id="section-upload">
       <h2>1. Carga de archivos</h2>
       <p class="muted">Sube los tres Excel comerciales: <strong>Ventas por Territorio</strong>, <strong>MB Q1</strong> y <strong>Contract Compliance</strong>. El procesamiento lo realiza el motor comercial reutilizable.</p>
       <div class="upload-grid">
-        <div class="upload-block">
-          <label class="upload-label" for="file-territory">Ventas por Territorio</label>
-          <input type="file" id="file-territory" accept=".xlsx,.xls" />
-          <div class="file-status" id="status-territory" data-empty>Archivo no cargado</div>
+        <div class="upload-field">
+          <label for="file-territory">1) Ventas por territorio (.xlsx)</label>
+          <div class="file-input-wrap">
+            <input type="file" id="file-territory" accept=".xlsx,.xls" />
+            <label class="file-input-trigger" for="file-territory">Seleccionar archivo</label>
+            <span class="file-input-filename" id="filename-territory">Sin archivos seleccionados</span>
+          </div>
+          <div class="file-status file-status--sr" id="status-territory" data-empty aria-hidden="true">Archivo no cargado</div>
         </div>
-        <div class="upload-block">
-          <label class="upload-label" for="file-cc">Contract Compliance (eje X: cumplimiento)</label>
-          <input type="file" id="file-cc" accept=".xlsx,.xls" />
-          <div class="file-status" id="status-cc" data-empty>Archivo no cargado</div>
+        <div class="upload-field">
+          <label for="file-mb">2) Márgenes / facturación (.xlsx)</label>
+          <div class="file-input-wrap">
+            <input type="file" id="file-mb" accept=".xlsx,.xls" />
+            <label class="file-input-trigger" for="file-mb">Seleccionar archivo</label>
+            <span class="file-input-filename" id="filename-mb">Sin archivos seleccionados</span>
+          </div>
+          <div class="file-status file-status--sr" id="status-mb" data-empty aria-hidden="true">Archivo no cargado</div>
         </div>
-        <div class="upload-block">
-          <label class="upload-label" for="file-mb">MB Q1 (eje Y: rentabilidad)</label>
-          <input type="file" id="file-mb" accept=".xlsx,.xls" />
-          <div class="file-status" id="status-mb" data-empty>Archivo no cargado</div>
+        <div class="upload-field">
+          <label for="file-cc">3) Contratos / compliance (.xlsx)</label>
+          <div class="file-input-wrap">
+            <input type="file" id="file-cc" accept=".xlsx,.xls" />
+            <label class="file-input-trigger" for="file-cc">Seleccionar archivo</label>
+            <span class="file-input-filename" id="filename-cc">Sin archivos seleccionados</span>
+          </div>
+          <div class="file-status file-status--sr" id="status-cc" data-empty aria-hidden="true">Archivo no cargado</div>
         </div>
       </div>
       <div class="alerts" id="upload-alerts" hidden></div>
+      <p id="file-load-hint" class="muted small" hidden aria-live="polite"></p>
       <p class="hint" id="hint-both" hidden>Con los tres archivos cargados se actualiza el dashboard automáticamente.</p>
     </section>
 
@@ -207,6 +225,23 @@
 
   </div>
 
+  <script>
+    window.__CC_OPENED_AS_FILE__ = location.protocol === "file:";
+  </script>
   <script type="module" src="js/dashboard.js"></script>
+  <script>
+    (function () {
+      if (!window.__CC_OPENED_AS_FILE__) return;
+      setTimeout(function () {
+        if (window.__CC_DASH_READY__) return;
+        var a = document.getElementById("upload-alerts");
+        if (!a) return;
+        a.hidden = false;
+        a.classList.add("alerts--info");
+        a.textContent =
+          "La aplicación no puede cargarse al abrir el HTML desde el disco (protocolo file://). Los módulos JavaScript requieren un servidor local. En la carpeta del proyecto ejecute «npx serve» o use «Live Server» en VS Code y abra una URL que empiece por http://localhost o http://127.0.0.1.";
+      }, 900);
+    })();
+  </script>
 </body>
 </html>
