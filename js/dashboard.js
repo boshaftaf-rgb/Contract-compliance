@@ -52,44 +52,130 @@ import { processCommercialExcels } from "./core/index.js";
   }
 
   /**
-   * Solo capa dashboard: índice customer_code → territorio desde filas ya normalizadas del motor.
-   * Última fila gana si hay duplicados de código.
+   * Etiquetas de segmento/canal en ventas que no deben tratarse como territorio geográfico
+   * (filtro Territorio del mapa estratégico).
    */
-  function buildTerritoryByCustomerCodeFromSales(territorySalesRows) {
-    var map = {};
-    var arr = Array.isArray(territorySalesRows) ? territorySalesRows : [];
-    for (var i = 0; i < arr.length; i++) {
-      var row = arr[i];
-      var code = String(row.customer_code != null ? row.customer_code : '');
-      if (!code) continue;
-      if (isBlankTerritoryValue(row.territory)) continue;
-      map[code] = String(row.territory).trim();
-    }
-    return map;
+  function isNonGeographicTerritoryLabel(label) {
+    if (label == null) return false;
+    var s = String(label).trim();
+    if (!s) return false;
+    var lower = s.toLowerCase();
+    if (lower.indexOf('ventas gobierno') !== -1) return true;
+    if (lower.indexOf('ventas intercompany') !== -1) return true;
+    if (lower.indexOf('intercompany') !== -1) return true;
+    return false;
   }
 
-  function resolveDashboardTerritoryForCustomer(customer, territoryByCode) {
+  /**
+   * Solo capa dashboard: índice customer_code → territorio desde filas normalizadas del motor.
+   * Fill-down: en Excel el territorio a veces solo viene en la fila “cabecera de grupo”; las filas
+   * siguientes con código heredan el último territorio no vacío hasta el siguiente bloque.
+   * Las etiquetas no geográficas (p. ej. Ventas Gobierno) no propagan contexto ni entran al lookup.
+   * @returns {{ byCode: Object.<string, string>, stats: object }}
+   */
+  function buildTerritoryByCustomerCodeFromSales(territorySalesRows) {
+    var byCode = {};
+    var arr = Array.isArray(territorySalesRows) ? territorySalesRows : [];
+    var currentTerritory = null;
+    var stats = {
+      rowsProcessed: arr.length,
+      headerOnlyTerritoryRows: 0,
+      headerExcludedTerritoryRows: 0,
+      explicitRowAssignments: 0,
+      explicitExcludedRowAssignments: 0,
+      fillDownRowAssignments: 0,
+      rowsWithCodeNoTerritoryContext: 0,
+      distinctCodesFillDown: {}
+    };
+    for (var i = 0; i < arr.length; i++) {
+      var row = arr[i];
+      var rawTerr = row.territory;
+      if (!isBlankTerritoryValue(rawTerr)) {
+        var tHead = String(rawTerr).trim();
+        if (isNonGeographicTerritoryLabel(tHead)) {
+          currentTerritory = null;
+        } else {
+          currentTerritory = tHead;
+        }
+      }
+      var code = String(row.customer_code != null ? row.customer_code : '');
+      if (!code) {
+        if (!isBlankTerritoryValue(rawTerr)) {
+          var ht = String(rawTerr).trim();
+          if (isNonGeographicTerritoryLabel(ht)) stats.headerExcludedTerritoryRows += 1;
+          else stats.headerOnlyTerritoryRows += 1;
+        }
+        continue;
+      }
+      if (!isBlankTerritoryValue(rawTerr)) {
+        var tExp = String(rawTerr).trim();
+        if (!isNonGeographicTerritoryLabel(tExp)) {
+          byCode[code] = tExp;
+          stats.explicitRowAssignments += 1;
+        } else {
+          stats.explicitExcludedRowAssignments += 1;
+        }
+        continue;
+      }
+      if (currentTerritory != null && currentTerritory !== '') {
+        byCode[code] = currentTerritory;
+        stats.fillDownRowAssignments += 1;
+        stats.distinctCodesFillDown[code] = 1;
+      } else {
+        stats.rowsWithCodeNoTerritoryContext += 1;
+      }
+    }
+    stats.distinctCodesFillDownCount = Object.keys(stats.distinctCodesFillDown).length;
+    delete stats.distinctCodesFillDown;
+    var countsByTerritory = {};
+    for (var k in byCode) {
+      if (!byCode.hasOwnProperty(k)) continue;
+      var t = byCode[k];
+      countsByTerritory[t] = (countsByTerritory[t] || 0) + 1;
+    }
+    stats.lookupCountByTerritory = countsByTerritory;
+    stats.codesInLookup = Object.keys(byCode).length;
+    stats.geographicTerritoriesInLookup = Object.keys(countsByTerritory).sort(function (a, b) {
+      return a.localeCompare(b, 'es', { sensitivity: 'base' });
+    });
+    return { byCode: byCode, stats: stats };
+  }
+
+  function resolveDashboardTerritoryForCustomer(customer, territoryByCode, territoryExclusionStats) {
     var code = String(customer.customer_code != null ? customer.customer_code : '');
-    if (!isBlankTerritoryValue(customer.territory)) return normalizeDashboardTerritoryLabel(customer.territory);
+    var fromCust = customer.territory;
+    if (!isBlankTerritoryValue(fromCust)) {
+      if (isNonGeographicTerritoryLabel(fromCust)) {
+        if (territoryExclusionStats) territoryExclusionStats.dashboardFromConsolidatedTerritory += 1;
+        return SIN_TERRITORIO;
+      }
+      return normalizeDashboardTerritoryLabel(fromCust);
+    }
     var fromSales = code ? territoryByCode[code] : undefined;
-    if (!isBlankTerritoryValue(fromSales)) return normalizeDashboardTerritoryLabel(fromSales);
+    if (!isBlankTerritoryValue(fromSales)) {
+      if (isNonGeographicTerritoryLabel(fromSales)) {
+        if (territoryExclusionStats) territoryExclusionStats.dashboardFromLookupDefensive += 1;
+        return SIN_TERRITORIO;
+      }
+      return normalizeDashboardTerritoryLabel(fromSales);
+    }
     return SIN_TERRITORIO;
   }
 
-  function logTerritoryDashboardDebug(territorySalesRows, territoryByCode, rows) {
+  function logTerritoryDashboardDebug(territorySalesRows, territoryByCode, rows, fillDownStats, territoryExclusionStats) {
     var ts = Array.isArray(territorySalesRows) ? territorySalesRows : [];
     var uniq = {};
     for (var u = 0; u < ts.length; u++) {
       var tv = ts[u].territory;
       if (!isBlankTerritoryValue(tv)) uniq[String(tv).trim()] = 1;
     }
-    var uniqKeys = Object.keys(uniq).sort(function (a, b) { return a.localeCompare(b, 'es', { sensitivity: 'base' }); });
+    var uniqKeysRaw = Object.keys(uniq).sort(function (a, b) { return a.localeCompare(b, 'es', { sensitivity: 'base' }); });
     var pairs = [];
     var seenSig = {};
     for (var p = 0; p < ts.length && pairs.length < 10; p++) {
       var tr = ts[p];
       var cc = String(tr.customer_code != null ? tr.customer_code : '');
-      if (!cc || isBlankTerritoryValue(tr.territory)) continue;
+      if (!cc || isBlankTerritoryValue(tr.territory) || isNonGeographicTerritoryLabel(tr.territory)) continue;
       var sig = cc + '\t' + String(tr.territory).trim();
       if (seenSig[sig]) continue;
       seenSig[sig] = 1;
@@ -101,11 +187,40 @@ import { processCommercialExcels } from "./core/index.js";
       else withT += 1;
     }
     console.log('[Mapa 5][Territorio] registros en analysisData.territorySales:', ts.length);
-    console.log('[Mapa 5][Territorio] códigos cliente con territorio en lookup (desde ventas):', Object.keys(territoryByCode || {}).length);
-    console.log('[Mapa 5][Territorio] territorios únicos (valores en ventas):', uniqKeys.length, uniqKeys);
-    console.log('[Mapa 5][Territorio] primeros 10 pares customer_code → territory (desde territorySales):', pairs);
-    console.log('[Mapa 5][Territorio] clientes filas dashboard con territorio distinto de «' + SIN_TERRITORIO + '»:', withT);
-    console.log('[Mapa 5][Territorio] clientes en «' + SIN_TERRITORIO + '»:', sinT);
+    console.log('[Mapa 5][Territorio] códigos cliente en lookup (tras fill-down, solo geográficos):', Object.keys(territoryByCode || {}).length);
+    var excludedLabelsInFile = uniqKeysRaw.filter(function (lab) { return isNonGeographicTerritoryLabel(lab); });
+    var geographicLabelsRaw = uniqKeysRaw.filter(function (lab) { return !isNonGeographicTerritoryLabel(lab); });
+    console.log('[Mapa 5][Territorio] etiquetas en archivo excluidas (no geográficas):', excludedLabelsInFile.length, excludedLabelsInFile);
+    console.log('[Mapa 5][Territorio] etiquetas en archivo consideradas geográficas:', geographicLabelsRaw.length, geographicLabelsRaw);
+    console.log('[Mapa 5][Territorio] territorios únicos (celdas no vacías en archivo):', uniqKeysRaw.length, uniqKeysRaw);
+    if (fillDownStats) {
+      console.log('[Mapa 5][Territorio] fill-down: cabeceras geográficas (territorio sin código):', fillDownStats.headerOnlyTerritoryRows);
+      console.log('[Mapa 5][Territorio] fill-down: cabeceras excluidas (segmento, sin código):', fillDownStats.headerExcludedTerritoryRows);
+      console.log('[Mapa 5][Territorio] fill-down: filas explícitas geográficas (código + territorio):', fillDownStats.explicitRowAssignments);
+      console.log('[Mapa 5][Territorio] fill-down: filas explícitas excluidas (código + etiqueta segmento):', fillDownStats.explicitExcludedRowAssignments);
+      console.log('[Mapa 5][Territorio] fill-down: asignaciones por fila (celda vacía + currentTerritory):', fillDownStats.fillDownRowAssignments);
+      console.log('[Mapa 5][Territorio] fill-down: códigos distintos al menos una vez por fill-down:', fillDownStats.distinctCodesFillDownCount);
+      console.log('[Mapa 5][Territorio] fill-down: filas con código pero sin contexto de territorio aún:', fillDownStats.rowsWithCodeNoTerritoryContext);
+      console.log('[Mapa 5][Territorio] territorios geográficos en lookup (conteo códigos únicos):', fillDownStats.lookupCountByTerritory);
+      if (fillDownStats.geographicTerritoriesInLookup) {
+        console.log('[Mapa 5][Territorio] territorios geográficos incluidos (lista):', fillDownStats.geographicTerritoriesInLookup);
+      }
+    }
+    if (territoryExclusionStats) {
+      var totEx = territoryExclusionStats.dashboardFromConsolidatedTerritory + territoryExclusionStats.dashboardFromLookupDefensive;
+      console.log('[Mapa 5][Territorio] clientes dashboard → «' + SIN_TERRITORIO + '» por etiqueta excluida (campo consolidado):', territoryExclusionStats.dashboardFromConsolidatedTerritory);
+      console.log('[Mapa 5][Territorio] clientes dashboard → «' + SIN_TERRITORIO + '» por etiqueta excluida (lookup, defensivo):', territoryExclusionStats.dashboardFromLookupDefensive);
+      console.log('[Mapa 5][Territorio] total clientes dashboard ajustados por exclusión no geográfica:', totEx);
+    }
+    console.log('[Mapa 5][Territorio] primeros 10 pares explícitos en archivo (celda territory llena):', pairs);
+    console.log('[Mapa 5][Territorio] clientes dashboard con territorio distinto de «' + SIN_TERRITORIO + '»:', withT);
+    console.log('[Mapa 5][Territorio] clientes dashboard en «' + SIN_TERRITORIO + '»:', sinT);
+    var dashByTerr = {};
+    for (var d = 0; d < rows.length; d++) {
+      var lab = rows[d].territory || SIN_TERRITORIO;
+      dashByTerr[lab] = (dashByTerr[lab] || 0) + 1;
+    }
+    console.log('[Mapa 5][Territorio] conteo final dashboard por territorio:', dashByTerr);
   }
 
   function finiteNumber(value) {
@@ -162,7 +277,9 @@ import { processCommercialExcels } from "./core/index.js";
   function mapAnalysisDataToDashboardModel(analysisData) {
     var customers = analysisData && Array.isArray(analysisData.customers) ? analysisData.customers : [];
     var territorySalesSrc = analysisData && Array.isArray(analysisData.territorySales) ? analysisData.territorySales : [];
-    var territoryByCustomerCode = buildTerritoryByCustomerCodeFromSales(territorySalesSrc);
+    var territoryBuild = buildTerritoryByCustomerCodeFromSales(territorySalesSrc);
+    var territoryByCustomerCode = territoryBuild.byCode;
+    var territoryExclusionStats = { dashboardFromConsolidatedTerritory: 0, dashboardFromLookupDefensive: 0 };
     var rows = customers.map(function (c) {
       var factEsp = finiteNumber(c.facturacion_esperada_total);
       var factReal = finiteNumber(c.facturado_neto_total);
@@ -172,7 +289,7 @@ import { processCommercialExcels } from "./core/index.js";
       if (isNaN(cump) && !isNaN(factEsp) && factEsp !== 0 && !isNaN(factReal)) cump = factReal / factEsp;
       var margenPct = toRatio(c.margen_sobre_ventas != null ? c.margen_sobre_ventas : c.margen_sobre_ventas_periodo_activo);
       if (isNaN(margenPct) && !isNaN(valorFact) && valorFact !== 0 && !isNaN(margenBruto)) margenPct = margenBruto / valorFact;
-      var territory = resolveDashboardTerritoryForCustomer(c, territoryByCustomerCode);
+      var territory = resolveDashboardTerritoryForCustomer(c, territoryByCustomerCode, territoryExclusionStats);
       return {
         key: String(c.customer_code || ''),
         codigo: String(c.customer_code || '-'),
@@ -194,7 +311,7 @@ import { processCommercialExcels } from "./core/index.js";
         aparece_en_contratos: !!c.aparece_en_contratos
       };
     });
-    logTerritoryDashboardDebug(territorySalesSrc, territoryByCustomerCode, rows);
+    logTerritoryDashboardDebug(territorySalesSrc, territoryByCustomerCode, rows, territoryBuild.stats, territoryExclusionStats);
     return {
       rows: rows,
       validationSummary: buildValidationSummary(analysisData),
@@ -516,13 +633,14 @@ import { processCommercialExcels } from "./core/index.js";
       var yMeta = resolveMargenAxis(r2);
       var xP = xMeta.value;
       var yP = yMeta.value;
-      if (!isFinite(xP) || !isFinite(yP)) {
-        if (!isFinite(xP) && !isFinite(yP)) quality.bothMissing += 1;
-        else if (!isFinite(xP)) quality.xMissing += 1;
+      // Number.isFinite evita el fallo de isFinite(null) === true (null se convierte en 0).
+      if (!Number.isFinite(xP) || !Number.isFinite(yP)) {
+        if (!Number.isFinite(xP) && !Number.isFinite(yP)) quality.bothMissing += 1;
+        else if (!Number.isFinite(xP)) quality.xMissing += 1;
         else quality.yMissing += 1;
-        var missReason = (!isFinite(xP) && !isFinite(yP))
+        var missReason = (!Number.isFinite(xP) && !Number.isFinite(yP))
           ? (xMeta.missing + ' + ' + yMeta.missing)
-          : (!isFinite(xP) ? xMeta.missing : yMeta.missing);
+          : (!Number.isFinite(xP) ? xMeta.missing : yMeta.missing);
         discarded.push({ key: r2.key, cliente: r2.cliente, reason: missReason });
         continue;
       }
@@ -641,9 +759,10 @@ import { processCommercialExcels } from "./core/index.js";
       { xref: 'paper', yref: 'paper', x: 0.01, y: 0.04, xanchor: 'left', yanchor: 'bottom', text: 'Acción urgente', showarrow: false, font: { size: 11, color: '#ef4444' } }
     ];
     return { data: data, layout: {
+      autosize: true,
       paper_bgcolor: '#1a222d', plot_bgcolor: '#121920',
       font: { color: '#e8edf4', size: 12 },
-      margin: { t: 44, r: 20, b: 56, l: 64 },
+      margin: { t: 56, r: 20, b: 56, l: 64 },
       xaxis: {
         title: { text: 'Cumplimiento de contrato (%)' },
         type: xLog ? 'log' : 'linear',
@@ -668,6 +787,51 @@ import { processCommercialExcels } from "./core/index.js";
       annotations: cornerAnnot,
       hoverlabel: { bgcolor: '#0f1419', bordercolor: '#2d3a4a', font: { color: '#e8edf4' } }
     } };
+  }
+
+  /**
+   * Diagnóstico del render Plotly (sección 5). Activar en consola: window.__DEBUG_STRATEGIC_MAP = true
+   * No altera datos ni el pipeline de consolidación; solo registra trazas/layout y muestras numéricas.
+   */
+  function logStrategicMapPlotlyDiagnostics(g, b, gd) {
+    if (!(typeof window !== 'undefined' && window.__DEBUG_STRATEGIC_MAP)) return;
+    var out = (g && g.out) ? g.out : [];
+    var points = out.slice(0, 10);
+    var xValues = out.map(function (o) { return o.x; });
+    var yValues = out.map(function (o) { return o.y; });
+    var markerSizes = out.map(function (o) { return o.size; });
+    console.log('strategicMap traces', b && b.data);
+    console.log('strategicMap layout', b && b.layout);
+    console.log('strategicMap first points', points);
+    console.log('x values sample', xValues.slice(0, 10));
+    console.log('y values sample', yValues.slice(0, 10));
+    console.log('marker sizes sample', markerSizes.slice(0, 10));
+    var xf = xValues.filter(function (v) { return typeof v === 'number' && isFinite(v); });
+    var yf = yValues.filter(function (v) { return typeof v === 'number' && isFinite(v); });
+    if (xf.length) console.log('x min/max', Math.min.apply(null, xf), Math.max.apply(null, xf));
+    else console.log('x min/max', 'sin valores finitos');
+    if (yf.length) console.log('y min/max', Math.min.apply(null, yf), Math.max.apply(null, yf));
+    else console.log('y min/max', 'sin valores finitos');
+    console.log('eje X log?', g && g.xLog, '| umbral cumpl. (ratio)', state.cumpThresh, '| umbral margen (ratio)', state.margThresh);
+    if (gd) {
+      var cs = window.getComputedStyle(gd);
+      console.log('plotly-chart DOM', gd, 'clientW/H', gd.clientWidth, gd.clientHeight, 'display', cs.display, 'visibility', cs.visibility, 'opacity', cs.opacity, 'overflow', cs.overflow);
+    }
+  }
+
+  function runStrategicMapPlotlyRender(gd, g, b) {
+    var config = { displayModeBar: true, responsive: true };
+    void gd.offsetHeight;
+    logStrategicMapPlotlyDiagnostics(g, b, gd);
+    var pr = Plotly.react(gd, b.data, b.layout, config);
+    function resizePlot() {
+      try { Plotly.Plots.resize(gd); } catch (rz) { console.warn('[StrategicMap] Plotly.Plots.resize:', rz); }
+    }
+    if (pr && typeof pr.then === 'function') {
+      pr.then(resizePlot).catch(function (err) { console.error('[StrategicMap] Plotly.react rechazado:', err); });
+    } else {
+      resizePlot();
+    }
   }
 
   function updateMapMedianBar(g) {
@@ -697,12 +861,34 @@ import { processCommercialExcels } from "./core/index.js";
         box.hidden = false;
         box.textContent = 'No hay clientes graficables con los filtros actuales. Faltantes: sin X=' + q.xMissing + ', sin Y=' + q.yMissing + ', sin ambos=' + q.bothMissing + '.';
       }
-      try { Plotly.purge('plotly-chart'); } catch (e) {}
+      try {
+        var gdEmpty = document.getElementById('plotly-chart');
+        if (gdEmpty) Plotly.purge(gdEmpty);
+        else Plotly.purge('plotly-chart');
+      } catch (e) {}
     } else {
       if (box) box.hidden = true;
       var b = buildPlotlyFromGetChartData(g);
-      if (!b.data.length) { if (box) { box.hidden = false; } try { Plotly.purge('plotly-chart'); } catch (e2) {} return; }
-      Plotly.react('plotly-chart', b.data, b.layout, { displayModeBar: true, responsive: true });
+      if (!b.data.length) {
+        if (box) { box.hidden = false; }
+        try {
+          var gdBad = document.getElementById('plotly-chart');
+          if (gdBad) Plotly.purge(gdBad);
+          else Plotly.purge('plotly-chart');
+        } catch (e2) {}
+        return;
+      }
+      var gd = document.getElementById('plotly-chart');
+      if (!gd) {
+        console.warn('[StrategicMap] No existe #plotly-chart; no se puede renderizar Plotly.');
+        return;
+      }
+      // Tras showSections(true) y el resto del DOM, Plotly puede medir 0×0 en el mismo macrotarea; aplazar al siguiente pintado y forzar resize.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          runStrategicMapPlotlyRender(gd, g, b);
+        });
+      });
     }
   }
 
