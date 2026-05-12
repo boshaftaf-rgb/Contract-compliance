@@ -276,7 +276,7 @@ import { processCommercialExcels } from "./core/index.js";
     var marginsFile = ref.marginsFile;
     var contractsFile = ref.contractsFile;
     if (typeof XLSX === 'undefined') {
-      throw new Error('SheetJS no se cargo. Comprueba la conexion a internet antes de procesar.');
+      throw new Error('SheetJS (XLSX) no se cargó. Comprueba que exista vendor/xlsx.full.min.js y sirve la app por HTTP (no file://).');
     }
     return processCommercialExcels({
       territorySalesFile: territorySalesFile,
