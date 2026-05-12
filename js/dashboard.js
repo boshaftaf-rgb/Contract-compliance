@@ -861,13 +861,12 @@ import { processCommercialExcels } from "./core/index.js";
     if (!el) return;
     var tC = state.cumpThresh, tM = state.margThresh;
     if (isNaN(tC)) tC = 0.5; if (isNaN(tM)) tM = 0.1;
-    var base = 'Líneas de mediana: Cumplimiento = ' + (tC * 100).toFixed(1) + '%, margen = ' + (tM * 100).toFixed(1) + '% (cartera completa).';
-    if (!g || !g.quality) { el.textContent = base; return; }
-    var q = g.quality;
-    var miss = q.xMissing + q.yMissing + q.bothMissing;
-    var qualityTxt = ' Evaluados: ' + q.evaluated + '. Graficados: ' + q.plotted + '. Excluidos por faltantes: ' + miss +
-      ' (sin X: ' + q.xMissing + ', sin Y: ' + q.yMissing + ', sin ambos: ' + q.bothMissing + ').';
-    el.textContent = base + qualityTxt;
+    var line = 'Medianas: cumplimiento ' + (tC * 100).toFixed(1) + '% · margen ' + (tM * 100).toFixed(1) + '%';
+    if (g && g.quality) {
+      var q = g.quality;
+      line += ' · evaluados ' + q.evaluated + ' · graficados ' + q.plotted;
+    }
+    el.textContent = line;
   }
 
   function updateStrategicMap() {
@@ -947,9 +946,41 @@ import { processCommercialExcels } from "./core/index.js";
   function renderRisks(rows) {
     var th = document.querySelector('#table-risks thead');
     var tb = document.querySelector('#table-risks tbody');
-    var L = buildRiskList(rows).slice(0, 40);
-    th.innerHTML = '<tr><th>Cliente</th><th>Código</th><th>Fact. real</th><th>Cump %</th><th>Margen %</th><th>Valor fact. MB</th><th>Cat.</th></tr>';
-    tb.innerHTML = L.map(function (r) { return '<tr' + (r.margen_pct < 0 ? ' class="row-danger"' : '') + '><td data-text>' + escapeHTML(r.cliente || '') + '</td><td data-text>' + escapeHTML(r.codigo || '') + '</td><td>' + fmtMoney(r.fact_real) + '</td><td>' + fmtPct(r.cump) + '</td><td>' + fmtPct(r.margen_pct) + '</td><td>' + fmtMoney(r.valor_fact) + '</td><td class="cat-' + quadrantClassSuffix(r.categoriaCode) + '">' + escapeHTML(r.categoria || '') + '</td></tr>'; }).join('');
+    var sumEl = document.getElementById('risks-summary');
+    if (!th || !tb) return;
+    var fullL = buildRiskList(rows || []);
+    var L = fullL.slice(0, 40);
+    if (sumEl) {
+      var nUrgent = 0, nNegMargin = 0, nOpp = 0;
+      for (var si = 0; si < fullL.length; si++) {
+        var sr = fullL[si];
+        if (sr.categoriaCode === 'urgent') nUrgent++;
+        if (!isNaN(sr.margen_pct) && sr.margen_pct < 0) nNegMargin++;
+        if (sr.categoriaCode === 'opp') nOpp++;
+      }
+      var parts = [];
+      if (nUrgent > 0) {
+        parts.push(nUrgent === 1 ? '1 cuenta requiere acción urgente' : nUrgent + ' cuentas requieren acción urgente');
+      }
+      if (nNegMargin > 0) {
+        parts.push(nNegMargin === 1 ? '1 con margen negativo' : nNegMargin + ' con margen negativo');
+      }
+      if (nOpp > 0) {
+        parts.push(nOpp === 1 ? '1 oportunidad por revisar' : nOpp + ' oportunidades por revisar');
+      }
+      if (!fullL.length) {
+        sumEl.textContent = '';
+        sumEl.hidden = true;
+      } else {
+        sumEl.textContent = parts.join(' · ');
+        sumEl.hidden = parts.length === 0;
+      }
+    }
+    th.innerHTML = '<tr><th scope="col" class="th-text">Cliente</th><th scope="col" class="th-text">Código</th><th scope="col" class="th-num">Facturación real</th><th scope="col" class="th-num">Cumplimiento</th><th scope="col" class="th-num">Margen</th><th scope="col" class="th-num">Valor MB</th><th scope="col" class="th-action">Acción sugerida</th></tr>';
+    tb.innerHTML = L.map(function (r) {
+      var code = quadrantClassSuffix(r.categoriaCode);
+      return '<tr' + (r.margen_pct < 0 ? ' class="row-danger"' : '') + '><td data-text>' + escapeHTML(r.cliente || '') + '</td><td data-text>' + escapeHTML(r.codigo || '') + '</td><td class="td-num">' + fmtMoney(r.fact_real) + '</td><td class="td-num">' + fmtPct(r.cump) + '</td><td class="td-num">' + fmtPct(r.margen_pct) + '</td><td class="td-num">' + fmtMoney(r.valor_fact) + '</td><td class="td-action"><span class="risk-badge risk-badge--' + code + '">' + escapeHTML(r.categoria || '') + '</span></td></tr>';
+    }).join('');
   }
 
   function renderOpps(rows) {

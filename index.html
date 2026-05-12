@@ -77,92 +77,106 @@
 
     <section class="card section section-strategic-map" id="section-chart" hidden>
       <h2>5. Mapa estratégico de clientes</h2>
-      <p class="muted small strategic-lead">Cada burbuja es un cliente. Ajusta filtros abajo; el gráfico se actualiza al instante.</p>
+      <p class="muted small strategic-lead">Cada burbuja representa un cliente. Usa los filtros para identificar riesgos, oportunidades y cuentas prioritarias.</p>
 
-      <div class="strategic-chips-deck" id="strategic-filters">
-        <div class="strategic-filter-card">
-          <div class="strategic-card-head">
-            <span class="strategic-card-title">Territorio</span>
-            <button type="button" class="map-todos-link" id="map-vend-todos" data-todos="vend" title="Incluir todos">Todos</button>
-          </div>
-          <div class="chip-row" id="map-chips-vend"></div>
-        </div>
-        <div class="strategic-filter-card">
-          <div class="strategic-card-head">
-            <span class="strategic-card-title">Desc. público / privado</span>
-            <button type="button" class="map-todos-link" id="map-pub-todos" data-todos="pub" title="Incluir todos">Todos</button>
-          </div>
-          <div class="chip-row" id="map-chips-pub">
-            <button type="button" class="map-chip" data-pub="Público" aria-pressed="false">Público <span class="chip-cnt" data-cnt="pub:Publico">(0)</span></button>
-            <button type="button" class="map-chip" data-pub="Privado" aria-pressed="false">Privado <span class="chip-cnt" data-cnt="pub:Privado">(0)</span></button>
-          </div>
-        </div>
-        <div class="strategic-filter-card">
-          <div class="strategic-card-head">
-            <span class="strategic-card-title">Licitación</span>
-            <button type="button" class="map-todos-link" id="map-lic-todos" data-todos="lic" title="Incluir todos">Todos</button>
-          </div>
-          <div class="chip-row" id="map-chips-lic">
-            <button type="button" class="map-chip" data-lic="Sí" aria-pressed="false">Sí <span class="chip-cnt" data-cnt="lic:Si">(0)</span></button>
-            <button type="button" class="map-chip" data-lic="No" aria-pressed="false">No <span class="chip-cnt" data-cnt="lic:No">(0)</span></button>
-          </div>
-        </div>
-      </div>
+      <div class="strategic-chips-deck strategic-chips-deck--unified" id="strategic-filters">
+        <div class="strategic-filters-panel">
+          <h3 class="strategic-filters-panel__title">Filtros del mapa</h3>
 
-      <div class="strategic-controls-row" id="strategic-controls">
-        <div class="strategic-ctrl strategic-ctrl--search">
-          <span class="strategic-ctrl-label">Buscar cliente / código</span>
-          <input type="search" class="strategic-input" id="map-search" placeholder="Escribe un nombre o código…" autocomplete="off" />
-        </div>
-        <div class="strategic-ctrl">
-          <span class="strategic-ctrl-label">Nº mín. contratos <output class="strategic-output" id="map-min-contratos-val" for="map-min-contratos">0</output></span>
-          <input type="range" class="strategic-range" id="map-min-contratos" min="0" max="50" value="0" step="1" />
-        </div>
-        <div class="strategic-ctrl">
-          <span class="strategic-ctrl-label">Cumplimiento mín. % <output class="strategic-output" id="map-min-cump-val" for="map-min-cump">0</output></span>
-          <input type="range" class="strategic-range" id="map-min-cump" min="0" max="200" value="0" step="1" />
-        </div>
-        <div class="strategic-ctrl">
-          <span class="strategic-ctrl-label">Color por</span>
-          <select class="strategic-select" id="map-color-by">
-            <option value="quadrant" selected>Cuadrante</option>
-            <option value="vendedor">Territorio</option>
-            <option value="publico">Público / privado</option>
-            <option value="licitacion">Licitación</option>
-          </select>
-        </div>
-        <div class="strategic-ctrl">
-          <span class="strategic-ctrl-label">Tamaño por</span>
-          <select class="strategic-select" id="map-size-by">
-            <option value="valor_fact">Valor facturado (MB)</option>
-            <option value="contratos" selected>Nº contratos</option>
-            <option value="fact_esp">Facturación esperada</option>
-            <option value="margen_bruto">Margen bruto</option>
-            <option value="uniform">Uniforme</option>
-          </select>
-        </div>
-        <div class="strategic-ctrl">
-          <span class="strategic-ctrl-label">Escala eje X</span>
-          <select class="strategic-select" id="map-x-scale">
-            <option value="linear" selected>Lineal</option>
-            <option value="log">Logarítmica</option>
-          </select>
-        </div>
-        <div class="strategic-ctrl strategic-ctrl--actions">
-          <button type="button" class="strategic-btn secondary" id="map-btn-reset">Reset filtros</button>
-          <button type="button" class="strategic-btn primary" id="map-btn-export">Exportar CSV</button>
+          <div class="strategic-map-search-block">
+            <label class="strategic-map-search-label" for="map-search">Buscar cliente o código</label>
+            <input type="search" class="strategic-input strategic-input--map-search" id="map-search" placeholder="Escribe un nombre o código…" autocomplete="off" />
+          </div>
+
+          <div class="strategic-filter-block strategic-filter-block--territory">
+            <div class="strategic-filter-label-row">
+              <span class="strategic-card-title">Territorio</span>
+            </div>
+            <div class="chip-row chip-row--map chip-row--territory-line">
+              <button type="button" class="map-todos-link map-chip" id="map-vend-todos" data-todos="vend" title="Incluir todos">Todos</button>
+              <div class="chip-row chip-row--map chip-row--territory-chips" id="map-chips-vend"></div>
+            </div>
+          </div>
+
+          <div class="strategic-filter-split">
+            <div class="strategic-filter-block strategic-filter-block--compact">
+              <div class="strategic-filter-label-row">
+                <span class="strategic-card-title">Tipo de cliente</span>
+              </div>
+              <div class="chip-row chip-row--map" id="map-chips-pub">
+                <button type="button" class="map-todos-link map-chip" id="map-pub-todos" data-todos="pub" title="Incluir todos">Todos</button>
+                <button type="button" class="map-chip" data-pub="Público" aria-pressed="false">Público <span class="chip-cnt" data-cnt="pub:Publico">(0)</span></button>
+                <button type="button" class="map-chip" data-pub="Privado" aria-pressed="false">Privado <span class="chip-cnt" data-cnt="pub:Privado">(0)</span></button>
+              </div>
+            </div>
+            <div class="strategic-filter-block strategic-filter-block--compact">
+              <div class="strategic-filter-label-row">
+                <span class="strategic-card-title">Licitación</span>
+              </div>
+              <div class="chip-row chip-row--map" id="map-chips-lic">
+                <button type="button" class="map-todos-link map-chip" id="map-lic-todos" data-todos="lic" title="Incluir todos">Todos</button>
+                <button type="button" class="map-chip" data-lic="Sí" aria-pressed="false">Sí <span class="chip-cnt" data-cnt="lic:Si">(0)</span></button>
+                <button type="button" class="map-chip" data-lic="No" aria-pressed="false">No <span class="chip-cnt" data-cnt="lic:No">(0)</span></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="strategic-map-adjustments">
+            <h4 class="strategic-map-adjustments__title">Ajustes del mapa</h4>
+            <div class="strategic-controls-row strategic-controls-row--embedded" id="strategic-controls">
+              <div class="strategic-ctrl">
+                <span class="strategic-ctrl-label">Contratos mínimos <output class="strategic-output" id="map-min-contratos-val" for="map-min-contratos">0</output></span>
+                <input type="range" class="strategic-range" id="map-min-contratos" min="0" max="50" value="0" step="1" />
+              </div>
+              <div class="strategic-ctrl">
+                <span class="strategic-ctrl-label">Cumplimiento mínimo <output class="strategic-output" id="map-min-cump-val" for="map-min-cump">0</output></span>
+                <input type="range" class="strategic-range" id="map-min-cump" min="0" max="200" value="0" step="1" />
+              </div>
+              <div class="strategic-ctrl">
+                <span class="strategic-ctrl-label">Color de burbuja</span>
+                <select class="strategic-select" id="map-color-by">
+                  <option value="quadrant" selected>Cuadrante</option>
+                  <option value="vendedor">Territorio</option>
+                  <option value="publico">Público / privado</option>
+                  <option value="licitacion">Licitación</option>
+                </select>
+              </div>
+              <div class="strategic-ctrl">
+                <span class="strategic-ctrl-label">Tamaño de burbuja</span>
+                <select class="strategic-select" id="map-size-by">
+                  <option value="valor_fact">Valor facturado (MB)</option>
+                  <option value="contratos" selected>Nº contratos</option>
+                  <option value="fact_esp">Facturación esperada</option>
+                  <option value="margen_bruto">Margen bruto</option>
+                  <option value="uniform">Uniforme</option>
+                </select>
+              </div>
+              <div class="strategic-ctrl">
+                <span class="strategic-ctrl-label">Escala del eje X</span>
+                <select class="strategic-select" id="map-x-scale">
+                  <option value="linear" selected>Lineal</option>
+                  <option value="log">Logarítmica</option>
+                </select>
+              </div>
+              <div class="strategic-ctrl strategic-ctrl--actions">
+                <button type="button" class="strategic-btn secondary" id="map-btn-reset">Limpiar filtros</button>
+                <button type="button" class="strategic-btn primary" id="map-btn-export">Exportar CSV</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       <p class="strategic-map-empty" id="strategic-map-empty" hidden>No hay clientes graficables con los filtros actuales.</p>
 
-      <div class="map-legend-bar" id="map-legend-bar" aria-label="Mediana y leyenda de cuadrantes">
+      <div class="map-legend-bar" id="map-legend-bar" aria-labelledby="map-legend-heading">
+        <h4 class="map-legend-bar__title" id="map-legend-heading">Referencia del mapa</h4>
         <p class="map-legend-median" id="map-median-text"></p>
         <div class="map-legend-cats" id="quadrant-legend">
-          <span class="map-cat map-cat-ideal"><span class="map-cat-dot"></span>Alta margen % + Alto cumpl. <strong>Ideal</strong></span>
-          <span class="map-cat map-cat-opp"><span class="map-cat-dot"></span>Alta margen % + Bajo cumpl. <strong>Oportunidad</strong></span>
-          <span class="map-cat map-cat-prices"><span class="map-cat-dot"></span>Baja margen % + Alto cumpl. <strong>Revisar precios</strong></span>
-          <span class="map-cat map-cat-urgent"><span class="map-cat-dot"></span>Baja margen % + Bajo cumpl. <strong>Acción urgente</strong></span>
+          <span class="map-cat map-cat-ideal"><span class="map-cat-dot"></span><strong>Ideal</strong></span>
+          <span class="map-cat map-cat-opp"><span class="map-cat-dot"></span><strong>Oportunidad</strong></span>
+          <span class="map-cat map-cat-prices"><span class="map-cat-dot"></span><strong>Revisar precios</strong></span>
+          <span class="map-cat map-cat-urgent"><span class="map-cat-dot"></span><strong>Acción urgente</strong></span>
         </div>
       </div>
 
@@ -172,10 +186,11 @@
     </section>
 
     <section class="card section" id="section-risks" hidden>
-      <h2>6. Riesgos</h2>
-      <p class="muted small">Ordenado por impacto (facturación o exposición) cuando aplica.</p>
-      <div class="data-table-wrap">
-        <table class="data-table" id="table-risks"><thead></thead><tbody></tbody></table>
+      <h2>6. Clientes con riesgo comercial</h2>
+      <p class="muted small risks-section-lead">Revisa primero las cuentas con menor cumplimiento, margen comprometido o mayor exposición comercial.</p>
+      <p class="risks-summary" id="risks-summary" hidden aria-live="polite"></p>
+      <div class="data-table-wrap data-table-wrap--risks">
+        <table class="data-table data-table--risks" id="table-risks"><thead></thead><tbody></tbody></table>
       </div>
     </section>
 
